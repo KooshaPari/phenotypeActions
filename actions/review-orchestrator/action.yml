@@ -1,0 +1,85 @@
+name: review-orchestrator
+
+description: Trigger review bots with cooldown markers and bounded retries.
+
+inputs:
+  pr_number:
+    description: Pull request number
+    required: true
+  bots:
+    description: Comma-separated bot handles (without @)
+    required: true
+  wave:
+    description: wave1 or wave2
+    required: true
+  cooldown_minutes:
+    description: Minimum minutes between trigger comments per bot
+    required: false
+    default: "15"
+  retry_budget:
+    description: Max retries per bot for this run
+    required: false
+    default: "2"
+
+runs:
+  using: composite
+  steps:
+    - name: Trigger review bots with cooldown guard
+      shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr_number }}
+        BOTS: ${{ inputs.bots }}
+        WAVE: ${{ inputs.wave }}
+        COOLDOWN_MINUTES: ${{ inputs.cooldown_minutes }}
+        RETRY_BUDGET: ${{ inputs.retry_budget }}
+      run: |
+        set -euo pipefail
+
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "gh CLI is required"
+          exit 1
+        fi
+
+        now="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        now_epoch="$(date -u +%s)"
+        IFS=',' read -ra bot_arr <<< "$BOTS"
+
+        for raw_bot in "${bot_arr[@]}"; do
+          bot="$(echo "$raw_bot" | xargs)"
+          [[ -z "$bot" ]] && continue
+
+          marker_prefix="bot-review-trigger: ${bot}"
+          marker="${marker_prefix} ${now} ${WAVE}"
+
+          comments_tsv="$(
+            gh pr view "$PR_NUMBER" --json comments \
+              --jq '.comments[] | select(.body | contains("'"$marker_prefix"'")) | [.createdAt, .body] | @tsv'
+          )"
+
+          attempts=0
+          last_epoch=0
+          if [[ -n "$comments_tsv" ]]; then
+            attempts="$(printf '%s\n' "$comments_tsv" | sed '/^$/d' | wc -l | tr -d ' ')"
+            last_at="$(printf '%s\n' "$comments_tsv" | tail -n 1 | cut -f1)"
+            if [[ -n "$last_at" ]]; then
+              last_epoch="$(date -u -d "$last_at" +%s)"
+            fi
+          fi
+
+          if (( attempts >= RETRY_BUDGET )); then
+            echo "[skip] ${bot}: retry budget reached (${attempts}/${RETRY_BUDGET})"
+            continue
+          fi
+
+          if (( last_epoch > 0 )); then
+            age_minutes="$(( (now_epoch - last_epoch) / 60 ))"
+            if (( age_minutes < COOLDOWN_MINUTES )); then
+              echo "[skip] ${bot}: cooldown active (${age_minutes}m < ${COOLDOWN_MINUTES}m)"
+              continue
+            fi
+          fi
+
+          comment="$(printf '@%s review\n\n%s' "$bot" "$marker")"
+          gh pr comment "$PR_NUMBER" --body "$comment"
+          echo "[triggered] ${bot} on PR #${PR_NUMBER}"
+        done

@@ -1,0 +1,70 @@
+name: Review Wave Orchestrator
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: false
+        type: string
+      wave1_bots:
+        required: false
+        type: string
+        default: "coderabbitai,gemini-code-assist"
+      wave2_bots:
+        required: false
+        type: string
+        default: "augment,codex"
+      cooldown_minutes:
+        required: false
+        type: number
+        default: 15
+      retry_budget:
+        required: false
+        type: number
+        default: 2
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: review-orchestrator-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR number
+        id: pr
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_call" && -n "$INPUT_PR" ]]; then
+            echo "number=$INPUT_PR" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$EVENT_PR" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger wave 1
+        uses: KooshaPari/phenotypeActions/actions/review-orchestrator@main
+        with:
+          pr_number: ${{ steps.pr.outputs.number }}
+          bots: ${{ inputs.wave1_bots || 'coderabbitai,gemini-code-assist' }}
+          wave: wave1
+          cooldown_minutes: ${{ inputs.cooldown_minutes }}
+          retry_budget: ${{ inputs.retry_budget }}
+
+      - name: Trigger wave 2
+        uses: KooshaPari/phenotypeActions/actions/review-orchestrator@main
+        with:
+          pr_number: ${{ steps.pr.outputs.number }}
+          bots: ${{ inputs.wave2_bots || 'augment,codex' }}
+          wave: wave2
+          cooldown_minutes: ${{ inputs.cooldown_minutes }}
+          retry_budget: ${{ inputs.retry_budget }}
