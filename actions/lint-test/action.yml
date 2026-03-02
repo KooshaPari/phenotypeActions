@@ -6,15 +6,15 @@ description: |
 
 inputs:
   working-directory:
-    description: Directory to run commands from (default: repo root)
+    description: "Directory to run commands from (default: repo root)"
     required: false
     default: "."
   skip-tests:
-    description: If true, skip running tests (lint only)
+    description: "If true, skip running tests (lint only)"
     required: false
     default: "false"
   bun-version:
-    description: Bun version to install (default: latest)
+    description: "Bun version to install (default: latest)"
     required: false
     default: "latest"
 
