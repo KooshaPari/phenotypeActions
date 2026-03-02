@@ -1,0 +1,36 @@
+name: "Policy Gate"
+description: "Enforce PR policy rules (merge-commit blocking, layered-fix requirement)"
+
+inputs:
+  base_branch:
+    description: "Base branch for the PR diff range"
+    required: false
+    default: "main"
+  block_merge_commits:
+    description: "Fail if merge commits are found in the PR diff range"
+    required: false
+    default: "true"
+  require_layered_fix:
+    description: "Reserved for future layered-fix enforcement"
+    required: false
+    default: "false"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Enforce merge-commit policy
+      if: inputs.block_merge_commits == 'true'
+      shell: bash
+      env:
+        BASE_REF: ${{ github.base_ref || inputs.base_branch }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      run: |
+        set -euo pipefail
+        git fetch origin "${BASE_REF}" --depth=1 || true
+        MERGES=$(git rev-list --merges "origin/${BASE_REF}..${HEAD_SHA}" || true)
+        if [[ -n "$MERGES" ]]; then
+          echo "::error::Merge commits detected in PR diff range:"
+          echo "$MERGES"
+          exit 1
+        fi
+        echo "Policy gate passed."
