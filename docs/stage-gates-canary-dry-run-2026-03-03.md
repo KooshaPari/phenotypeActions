@@ -39,4 +39,8 @@ Matrix artifact path logged by run:
 
 - Canary dry-run lane now executes successfully in hosted GitHub Actions after checkout/dependency fixes.
 - Remaining blockers are target-repo accessibility (`civ`) and template/contract drift in reachable repos (`trash-cli`).
-- Rollout should stay canary-scoped until repo access and stage-gates/template alignment are resolved for both canary targets.
+- Rollout progression now uses objective phase criteria:
+  - `hold`: <80% analyzed or any `repo_unreachable`
+  - `phase-1`: 100% analyzed and >=50% canary-ready
+  - `phase-2`: 100% analyzed and >=80% canary-ready
+  - `broad`: 100% analyzed and 100% canary-ready for 2 consecutive runs

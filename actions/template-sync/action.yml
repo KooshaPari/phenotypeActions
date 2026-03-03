@@ -17,6 +17,10 @@ inputs:
     description: Path to canonical stage-gates template inside stage_gates_repo
     required: false
     default: "templates/stage-gates/v1/stage-gates.yml"
+  dependency_fallbacks_file:
+    description: Path to owner-scoped dependency fallback mapping CSV inside stage_gates_repo
+    required: false
+    default: "templates/template-sync/dependency-fallbacks.csv"
   target_repos:
     description: "Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)"
     required: false
@@ -68,6 +72,7 @@ runs:
         TEMPLATE_REPO: ${{ inputs.template_repo }}
         STAGE_GATES_REPO: ${{ inputs.stage_gates_repo }}
         STAGE_GATES_TEMPLATE_PATH: ${{ inputs.stage_gates_template_path }}
+        DEPENDENCY_FALLBACKS_FILE: ${{ inputs.dependency_fallbacks_file }}
         TARGET_REPOS: ${{ inputs.target_repos }}
         REPO_OWNER: ${{ inputs.repo_owner }}
         DRY_RUN: ${{ inputs.dry_run }}
@@ -89,10 +94,37 @@ runs:
         log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
         log_error() { echo -e "${RED}✗${NC} $*"; }
 
+        resolve_fallback_mapping() {
+          local owner="$1"
+          local dependency_key="$2"
+          local fallback_file_path="$3"
+          local fallback_slug=""
+          local fallback_workspace_dir=""
+          local remediation_hint=""
+
+          if [[ ! -f "${fallback_file_path}" ]]; then
+            return 0
+          fi
+
+          while IFS=',' read -r row_owner row_dependency_key row_fallback_slug row_fallback_workspace_dir row_remediation_hint; do
+            [[ "${row_owner}" == "owner" ]] && continue
+            [[ "${row_owner}" != "${owner}" ]] && continue
+            [[ "${row_dependency_key}" != "${dependency_key}" ]] && continue
+            fallback_slug="${row_fallback_slug}"
+            fallback_workspace_dir="${row_fallback_workspace_dir}"
+            remediation_hint="${row_remediation_hint}"
+            break
+          done < "${fallback_file_path}"
+
+          echo "${fallback_slug}|${fallback_workspace_dir}|${remediation_hint}"
+        }
+
         resolve_dependency_repo() {
           local label="$1"
-          local requested="$2"
-          local fallback_path="$3"
+          local dependency_key="$2"
+          local requested="$3"
+          local fallback_path="$4"
+          local fallback_hint="${5:-}"
           local requested_path="${PHENOTYPE_ROOT}/${requested}"
           local resolved_path=""
 
@@ -114,14 +146,42 @@ runs:
 
           if [[ -z "${resolved_path}" ]]; then
             log_error "${label}: dependency repo unavailable (${requested})"
+            if [[ -n "${fallback_hint}" ]]; then
+              log_warning "${label}: remediation_hint=${fallback_hint}"
+            fi
             return 1
           fi
 
           echo "${resolved_path}"
         }
 
-        TEMPLATE_REPO_PATH="$(resolve_dependency_repo "Template repo" "${TEMPLATE_REPO}" "${PHENOTYPE_ROOT}/phenotypeActions")"
-        STAGE_GATES_REPO_PATH="$(resolve_dependency_repo "Stage-gates repo" "${STAGE_GATES_REPO}" "${PHENOTYPE_ROOT}/phenotype-config")"
+        FALLBACK_FILE="${PHENOTYPE_ROOT}/phenotype-config/${DEPENDENCY_FALLBACKS_FILE}"
+
+        template_map="$(resolve_fallback_mapping "${REPO_OWNER}" "template_repo" "${FALLBACK_FILE}")"
+        IFS='|' read -r template_fallback_slug template_fallback_workspace template_hint <<< "${template_map}"
+        stage_map="$(resolve_fallback_mapping "${REPO_OWNER}" "stage_gates_repo" "${FALLBACK_FILE}")"
+        IFS='|' read -r stage_fallback_slug stage_fallback_workspace stage_hint <<< "${stage_map}"
+
+        template_requested="${TEMPLATE_REPO}"
+        stage_requested="${STAGE_GATES_REPO}"
+        if [[ "${template_requested}" != */* && -n "${template_fallback_slug}" ]]; then
+          template_requested="${template_fallback_slug}"
+        fi
+        if [[ "${stage_requested}" != */* && -n "${stage_fallback_slug}" ]]; then
+          stage_requested="${stage_fallback_slug}"
+        fi
+
+        template_fallback_path="${PHENOTYPE_ROOT}/phenotypeActions"
+        if [[ -n "${template_fallback_workspace}" ]]; then
+          template_fallback_path="${PHENOTYPE_ROOT}/${template_fallback_workspace}"
+        fi
+        stage_fallback_path="${PHENOTYPE_ROOT}/phenotype-config"
+        if [[ -n "${stage_fallback_workspace}" ]]; then
+          stage_fallback_path="${PHENOTYPE_ROOT}/${stage_fallback_workspace}"
+        fi
+
+        TEMPLATE_REPO_PATH="$(resolve_dependency_repo "Template repo" "template_repo" "${template_requested}" "${template_fallback_path}" "${template_hint}")"
+        STAGE_GATES_REPO_PATH="$(resolve_dependency_repo "Stage-gates repo" "stage_gates_repo" "${stage_requested}" "${stage_fallback_path}" "${stage_hint}")"
 
         log_info "Template Sync"
         log_info "Template repo: ${TEMPLATE_REPO_PATH}"
@@ -136,10 +196,19 @@ runs:
         TOTAL_REPOS=${#repos[@]}
         SYNCED_REPOS=0
         DRIFT_REPOS=()
-        RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+        RUN_ID="${GITHUB_RUN_ID:-local}"
+        RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
+        RUN_STAMP="${RUN_ID}-${RUN_ATTEMPT}"
         MATRIX_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-readiness-matrix-${RUN_STAMP}.csv"
+        SUMMARY_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-remediation-${RUN_STAMP}.md"
         mkdir -p "$(dirname "${MATRIX_FILE}")"
-        echo "repo,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready" > "${MATRIX_FILE}"
+        echo "repo,run_outcome,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint" > "${MATRIX_FILE}"
+        {
+          echo "# Stage-Gates Canary Remediation Summary (${RUN_STAMP})"
+          echo ""
+          echo "| repo | run_outcome | remediation_hint |"
+          echo "| --- | --- | --- |"
+        } > "${SUMMARY_FILE}"
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
@@ -149,6 +218,9 @@ runs:
             log_info "Cloning ${REPO_OWNER}/${repo_name}..."
             if ! gh repo clone "${REPO_OWNER}/${repo_name}" "$repo_path" -- --depth 1 >/dev/null 2>&1; then
               log_warning "Repo not found/unreachable (skipping): ${repo_name}"
+              remediation_hint="repo_unreachable: verify ${REPO_OWNER}/${repo_name} exists and token has repo read access"
+              echo "${repo_name},repo_unreachable,false,false,false,false,false,false,${remediation_hint}" >> "${MATRIX_FILE}"
+              echo "| ${repo_name} | repo_unreachable | ${remediation_hint} |" >> "${SUMMARY_FILE}"
               continue
             fi
           fi
@@ -242,11 +314,35 @@ runs:
             strictness_drift=true
           fi
 
+          run_outcome="in_sync"
+          remediation_hint="none"
+          if [[ "${governance_drift}" == true ]]; then
+            run_outcome="governance_drift"
+            remediation_hint="sync AGENTS.md and CLAUDE.md from template source"
+          fi
+          if [[ "${workflow_drift}" == true ]]; then
+            run_outcome="workflow_drift"
+            remediation_hint="wire policy-gate and lint-test workflows to phenotypeActions composite actions"
+          fi
+          if [[ "${stage_gates_drift}" == true ]]; then
+            run_outcome="stage_gates_drift"
+            remediation_hint="replace .github/workflows/stage-gates.yml with contract template ${STAGE_GATES_TEMPLATE_PATH}"
+          fi
+          if [[ "${strictness_drift}" == true ]]; then
+            run_outcome="strictness_drift"
+            remediation_hint="set CodeRabbit severity=info, Gemini threshold=LOW, and include STAGE_GATES_STRICT wiring"
+          fi
+
           stage_gates_ready=true
           canary_ready=true
           [[ "${stage_gates_drift}" == true ]] && stage_gates_ready=false
           [[ "${strictness_drift}" == true ]] && canary_ready=false
-          echo "${repo_name},${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready}" >> "${MATRIX_FILE}"
+          if [[ "${drift_detected}" == true && "${run_outcome}" == "in_sync" ]]; then
+            run_outcome="manual_review_required"
+            remediation_hint="review logs for drift source and apply contract templates"
+          fi
+          echo "${repo_name},${run_outcome},${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready},${remediation_hint}" >> "${MATRIX_FILE}"
+          echo "| ${repo_name} | ${run_outcome} | ${remediation_hint} |" >> "${SUMMARY_FILE}"
 
           if [[ "$drift_detected" == true ]]; then
             DRIFT_REPOS+=("$repo_name")
@@ -330,3 +426,4 @@ runs:
           log_success "Synced repos: $SYNCED_REPOS"
         fi
         echo "Readiness matrix: ${MATRIX_FILE}"
+        echo "Remediation summary: ${SUMMARY_FILE}"

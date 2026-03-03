@@ -111,16 +111,28 @@ jobs:
           fi
 
       - name: Run template sync action
+        id: template-sync
         uses: ./phenotypeActions/actions/template-sync
         with:
-          template_repo: "template-commons"
-          stage_gates_repo: "phenotype-config"
+          template_repo: ${{ steps.resolve-deps.outputs.template_slug }}
+          stage_gates_repo: ${{ steps.resolve-deps.outputs.stage_gates_slug }}
           stage_gates_template_path: "templates/stage-gates/v1/stage-gates.yml"
+          dependency_fallbacks_file: "templates/template-sync/dependency-fallbacks.csv"
           target_repos: ${{ steps.set-repos.outputs.repos }}
           repo_owner: ${{ env.REPO_OWNER }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: "main"
+
+      - name: Upload canary artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-gates-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            phenotypeActions/docs/stage-gates-canary-readiness-matrix-${{ github.run_id }}-${{ github.run_attempt }}.csv
+            phenotypeActions/docs/stage-gates-canary-remediation-${{ github.run_id }}-${{ github.run_attempt }}.md
+          if-no-files-found: warn
 
       - name: Notify on completion
         if: always()
