@@ -21,6 +21,10 @@ inputs:
     description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
+  repo_owner:
+    description: GitHub owner/org containing target repositories
+    required: false
+    default: "KooshaPari"
   dry_run:
     description: If true, report drift but do not create PRs
     required: false
@@ -65,10 +69,11 @@ runs:
         STAGE_GATES_REPO: ${{ inputs.stage_gates_repo }}
         STAGE_GATES_TEMPLATE_PATH: ${{ inputs.stage_gates_template_path }}
         TARGET_REPOS: ${{ inputs.target_repos }}
+        REPO_OWNER: ${{ inputs.repo_owner }}
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
         BASE_BRANCH: ${{ inputs.base_branch }}
-        PHENOTYPE_ROOT: /Users/kooshapari/CodeProjects/Phenotype/repos
+        PHENOTYPE_ROOT: ${{ github.workspace }}
       run: |
         set -euo pipefail
 
@@ -117,8 +122,11 @@ runs:
           repo_path="${PHENOTYPE_ROOT}/${repo_name}"
 
           if [[ ! -d "$repo_path" ]]; then
-            log_warning "Repo not found (skipping): ${repo_name}"
-            continue
+            log_info "Cloning ${REPO_OWNER}/${repo_name}..."
+            if ! gh repo clone "${REPO_OWNER}/${repo_name}" "$repo_path" -- --depth 1 >/dev/null 2>&1; then
+              log_warning "Repo not found/unreachable (skipping): ${repo_name}"
+              continue
+            fi
           fi
 
           log_info "Checking ${repo_name}..."

@@ -32,21 +32,21 @@ jobs:
       - name: Checkout phenotypeActions
         uses: actions/checkout@v6
         with:
-          repository: Phenotype/repos/phenotypeActions
+          repository: KooshaPari/phenotypeActions
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout template-commons
         uses: actions/checkout@v6
         with:
-          repository: Phenotype/repos/template-commons
+          repository: KooshaPari/template-commons
           path: template-commons
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout phenotype-config
         uses: actions/checkout@v6
         with:
-          repository: Phenotype/repos/phenotype-config
+          repository: KooshaPari/phenotype-config
           path: phenotype-config
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -82,6 +82,7 @@ jobs:
           stage_gates_repo: "phenotype-config"
           stage_gates_template_path: "templates/stage-gates/v1/stage-gates.yml"
           target_repos: ${{ steps.set-repos.outputs.repos }}
+          repo_owner: "KooshaPari"
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: "main"
