@@ -6,7 +6,7 @@ description: |
 
 inputs:
   template_repo:
-    description: Source template repository (default: template-commons)
+    description: "Source template repository (default: template-commons)"
     required: false
     default: "template-commons"
   stage_gates_repo:
@@ -18,7 +18,7 @@ inputs:
     required: false
     default: "templates/stage-gates/v1/stage-gates.yml"
   target_repos:
-    description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
+    description: "Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)"
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
   repo_owner:
@@ -26,14 +26,14 @@ inputs:
     required: false
     default: "KooshaPari"
   dry_run:
-    description: If true, report drift but do not create PRs
+    description: "If true, report drift but do not create PRs"
     required: false
     default: "false"
   github_token:
     description: GitHub token for creating PRs
     required: true
   base_branch:
-    description: Base branch to create PRs against (default: main)
+    description: "Base branch to create PRs against (default: main)"
     required: false
     default: "main"
 
