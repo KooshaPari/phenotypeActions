@@ -194,6 +194,8 @@ runs:
         IFS=',' read -ra repos <<< "$TARGET_REPOS"
 
         TOTAL_REPOS=${#repos[@]}
+        ANALYZED_REPOS=0
+        CANARY_READY_COUNT=0
         SYNCED_REPOS=0
         DRIFT_REPOS=()
         RUN_ID="${GITHUB_RUN_ID:-local}"
@@ -201,21 +203,89 @@ runs:
         RUN_STAMP="${RUN_ID}-${RUN_ATTEMPT}"
         MATRIX_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-readiness-matrix-${RUN_STAMP}.csv"
         SUMMARY_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-remediation-${RUN_STAMP}.md"
+        DECISION_CSV_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-decision-${RUN_STAMP}.csv"
+        DECISION_JSON_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-decision-${RUN_STAMP}.json"
+        NEXT_ROLLOUT_CSV_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-next-repo-rollout-${RUN_STAMP}.csv"
+        NEXT_ROLLOUT_JSON_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-next-repo-rollout-${RUN_STAMP}.json"
+        NEXT_ROLLOUT_TSV="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-next-repo-rollout-${RUN_STAMP}.tsv"
         mkdir -p "$(dirname "${MATRIX_FILE}")"
-        echo "repo,run_outcome,remediation_category,owner_hint,token_hint,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint" > "${MATRIX_FILE}"
+        echo "repo,run_outcome,remediation_category,owner_hint,token_hint,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint,next_command" > "${MATRIX_FILE}"
         {
           echo "# Stage-Gates Canary Remediation Summary (${RUN_STAMP})"
           echo ""
-          echo "| repo | run_outcome | remediation_hint |"
-          echo "| --- | --- | --- |"
+          echo "| repo | run_outcome | remediation_hint | next_command |"
+          echo "| --- | --- | --- | --- |"
         } > "${SUMMARY_FILE}"
         SUMMARY_TABLE_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-summary-table-${RUN_STAMP}.md"
         {
           echo "# Stage-Gates Canary Summary Table (${RUN_STAMP})"
           echo ""
-          echo "| repo | run_outcome | remediation_category | owner_hint | token_hint | stage_gates_ready | canary_ready |"
-          echo "| --- | --- | --- | --- | --- | --- | --- |"
+          echo "| repo | run_outcome | remediation_category | owner_hint | token_hint | stage_gates_ready | canary_ready | next_command |"
+          echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
         } > "${SUMMARY_TABLE_FILE}"
+        echo -n > "${NEXT_ROLLOUT_TSV}"
+
+        next_command_for_category() {
+          local category="$1"
+          local repo_name="$2"
+          case "${category}" in
+            access_repo_unreachable)
+              echo "gh repo view ${REPO_OWNER}/${repo_name} || gh auth refresh -h github.com -s repo"
+              ;;
+            template_governance_sync_required)
+              echo "cp ${TEMPLATE_REPO_PATH}/templates/AGENTS.md ${repo_name}/AGENTS.md && cp ${TEMPLATE_REPO_PATH}/templates/CLAUDE.md ${repo_name}/CLAUDE.md"
+              ;;
+            workflow_composite_wiring_required)
+              echo "rg -n \"phenotypeActions/actions/(policy-gate|lint-test)\" ${repo_name}/.github/workflows || echo \"wire composite action refs\""
+              ;;
+            stage_gates_contract_sync_required)
+              echo "cp ${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH} ${repo_name}/.github/workflows/stage-gates.yml"
+              ;;
+            strictness_signal_alignment_required)
+              echo "rg -n \"severity:[[:space:]]*info|comment_severity_threshold:[[:space:]]*LOW|STAGE_GATES_STRICT\" ${repo_name}/.coderabbit.yaml ${repo_name}/.gemini/config.yaml ${repo_name}/.github/workflows/stage-gates.yml"
+              ;;
+            manual_review_required)
+              echo "gh run view ${RUN_ID} --repo ${REPO_OWNER}/phenotypeActions --log"
+              ;;
+            none)
+              echo "echo \"no remediation required\""
+              ;;
+            *)
+              echo "echo \"review canary logs and drift fields\""
+              ;;
+          esac
+        }
+
+        emit_next_rollout_candidate() {
+          local repo_name="$1"
+          local outcome="$2"
+          local category="$3"
+          local governance="$4"
+          local workflow="$5"
+          local stage_gates="$6"
+          local strictness="$7"
+          local stage_ready="$8"
+          local canary_ready="$9"
+          local command="${10}"
+          local score=100
+          local recommended_action="advance"
+
+          [[ "${outcome}" == "repo_unreachable" ]] && score=0
+          [[ "${governance}" == "true" ]] && score=$((score - 10))
+          [[ "${workflow}" == "true" ]] && score=$((score - 15))
+          [[ "${stage_gates}" == "true" ]] && score=$((score - 40))
+          [[ "${strictness}" == "true" ]] && score=$((score - 35))
+          (( score < 0 )) && score=0
+
+          if [[ "${canary_ready}" != "true" ]]; then
+            recommended_action="fix_then_retry"
+          elif [[ "${stage_ready}" != "true" ]]; then
+            recommended_action="sync_stage_gates_then_retry"
+          fi
+
+          printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+            "${score}" "${repo_name}" "${recommended_action}" "${outcome}" "${category}" "${command}" >> "${NEXT_ROLLOUT_TSV}"
+        }
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
@@ -229,9 +299,11 @@ runs:
               owner_hint="verify owner=${REPO_OWNER}"
               token_hint="ensure token has contents:read and repo visibility for ${REPO_OWNER}/${repo_name}"
               remediation_hint="repo_unreachable: verify ${REPO_OWNER}/${repo_name} exists and token has repo read access"
-              echo "${repo_name},repo_unreachable,${remediation_category},${owner_hint},${token_hint},false,false,false,false,false,false,${remediation_hint}" >> "${MATRIX_FILE}"
-              echo "| ${repo_name} | repo_unreachable | ${remediation_hint} |" >> "${SUMMARY_FILE}"
-              echo "| ${repo_name} | repo_unreachable | ${remediation_category} | ${owner_hint} | ${token_hint} | false | false |" >> "${SUMMARY_TABLE_FILE}"
+              next_command="$(next_command_for_category "${remediation_category}" "${repo_name}")"
+              echo "${repo_name},repo_unreachable,${remediation_category},${owner_hint},${token_hint},false,false,false,false,false,false,${remediation_hint},${next_command}" >> "${MATRIX_FILE}"
+              echo "| ${repo_name} | repo_unreachable | ${remediation_hint} | \`${next_command}\` |" >> "${SUMMARY_FILE}"
+              echo "| ${repo_name} | repo_unreachable | ${remediation_category} | ${owner_hint} | ${token_hint} | false | false | \`${next_command}\` |" >> "${SUMMARY_TABLE_FILE}"
+              emit_next_rollout_candidate "${repo_name}" "repo_unreachable" "${remediation_category}" "false" "false" "false" "false" "false" "false" "${next_command}"
               continue
             fi
           fi
@@ -350,6 +422,7 @@ runs:
             remediation_category="strictness_signal_alignment_required"
             remediation_hint="set CodeRabbit severity=info, Gemini threshold=LOW, and include STAGE_GATES_STRICT wiring"
           fi
+          next_command="$(next_command_for_category "${remediation_category}" "${repo_name}")"
 
           stage_gates_ready=true
           canary_ready=true
@@ -359,10 +432,16 @@ runs:
             run_outcome="manual_review_required"
             remediation_category="manual_review_required"
             remediation_hint="review logs for drift source and apply contract templates"
+            next_command="$(next_command_for_category "${remediation_category}" "${repo_name}")"
           fi
-          echo "${repo_name},${run_outcome},${remediation_category},owner=${REPO_OWNER},token=repo_read_required,${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready},${remediation_hint}" >> "${MATRIX_FILE}"
-          echo "| ${repo_name} | ${run_outcome} | ${remediation_hint} |" >> "${SUMMARY_FILE}"
-          echo "| ${repo_name} | ${run_outcome} | ${remediation_category} | owner=${REPO_OWNER} | token=repo_read_required | ${stage_gates_ready} | ${canary_ready} |" >> "${SUMMARY_TABLE_FILE}"
+          echo "${repo_name},${run_outcome},${remediation_category},owner=${REPO_OWNER},token=repo_read_required,${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready},${remediation_hint},${next_command}" >> "${MATRIX_FILE}"
+          echo "| ${repo_name} | ${run_outcome} | ${remediation_hint} | \`${next_command}\` |" >> "${SUMMARY_FILE}"
+          echo "| ${repo_name} | ${run_outcome} | ${remediation_category} | owner=${REPO_OWNER} | token=repo_read_required | ${stage_gates_ready} | ${canary_ready} | \`${next_command}\` |" >> "${SUMMARY_TABLE_FILE}"
+          ANALYZED_REPOS=$((ANALYZED_REPOS + 1))
+          if [[ "${canary_ready}" == "true" ]]; then
+            CANARY_READY_COUNT=$((CANARY_READY_COUNT + 1))
+          fi
+          emit_next_rollout_candidate "${repo_name}" "${run_outcome}" "${remediation_category}" "${governance_drift}" "${workflow_drift}" "${stage_gates_drift}" "${strictness_drift}" "${stage_gates_ready}" "${canary_ready}" "${next_command}"
 
           if [[ "$drift_detected" == true ]]; then
             DRIFT_REPOS+=("$repo_name")
@@ -448,10 +527,94 @@ runs:
         echo "Readiness matrix: ${MATRIX_FILE}"
         echo "Remediation summary: ${SUMMARY_FILE}"
         echo "Summary table: ${SUMMARY_TABLE_FILE}"
+        if (( TOTAL_REPOS > 0 )); then
+          coverage_pct=$(( ANALYZED_REPOS * 100 / TOTAL_REPOS ))
+        else
+          coverage_pct=0
+        fi
+        if (( ANALYZED_REPOS > 0 )); then
+          canary_ready_pct=$(( CANARY_READY_COUNT * 100 / ANALYZED_REPOS ))
+        else
+          canary_ready_pct=0
+        fi
+        phase_1_pass=false
+        phase_2_pass=false
+        broad_pass=false
+        if (( coverage_pct == 100 && canary_ready_pct >= 50 )); then
+          phase_1_pass=true
+        fi
+        if (( coverage_pct == 100 && canary_ready_pct >= 80 )); then
+          phase_2_pass=true
+        fi
+        # broad pass requires two consecutive perfect runs; cannot be true from a single run artifact.
+        broad_pass=false
+        recommended_phase="hold"
+        decision_reason="insufficient_thresholds"
+        if [[ "${phase_2_pass}" == "true" ]]; then
+          recommended_phase="phase-2"
+          decision_reason="phase_2_threshold_met"
+        elif [[ "${phase_1_pass}" == "true" ]]; then
+          recommended_phase="phase-1"
+          decision_reason="phase_1_threshold_met"
+        fi
+        if (( coverage_pct == 100 && canary_ready_pct == 100 )); then
+          recommended_phase="prepare_broad_after_second_perfect_run"
+          decision_reason="first_perfect_run_recorded"
+        fi
+        echo "run_stamp,total_repos,analyzed_repos,canary_ready_count,coverage_pct,canary_ready_pct,phase_1_pass,phase_2_pass,broad_pass,recommended_phase,decision_reason" > "${DECISION_CSV_FILE}"
+        echo "${RUN_STAMP},${TOTAL_REPOS},${ANALYZED_REPOS},${CANARY_READY_COUNT},${coverage_pct},${canary_ready_pct},${phase_1_pass},${phase_2_pass},${broad_pass},${recommended_phase},${decision_reason}" >> "${DECISION_CSV_FILE}"
+        cat > "${DECISION_JSON_FILE}" <<EOF
+        {
+          "run_stamp": "${RUN_STAMP}",
+          "total_repos": ${TOTAL_REPOS},
+          "analyzed_repos": ${ANALYZED_REPOS},
+          "canary_ready_count": ${CANARY_READY_COUNT},
+          "coverage_pct": ${coverage_pct},
+          "canary_ready_pct": ${canary_ready_pct},
+          "phase_1_pass": ${phase_1_pass},
+          "phase_2_pass": ${phase_2_pass},
+          "broad_pass": ${broad_pass},
+          "recommended_phase": "${recommended_phase}",
+          "decision_reason": "${decision_reason}"
+        }
+        EOF
+
+        sort -t $'\t' -k1,1nr -k2,2 "${NEXT_ROLLOUT_TSV}" > "${NEXT_ROLLOUT_TSV}.sorted"
+        mv "${NEXT_ROLLOUT_TSV}.sorted" "${NEXT_ROLLOUT_TSV}"
+        echo "rank,repo,priority_score,recommended_action,run_outcome,remediation_category,next_command" > "${NEXT_ROLLOUT_CSV_FILE}"
+        echo "[" > "${NEXT_ROLLOUT_JSON_FILE}"
+        rank=0
+        while IFS=$'\t' read -r score repo_name recommended_action run_outcome remediation_category next_command; do
+          rank=$((rank + 1))
+          echo "${rank},${repo_name},${score},${recommended_action},${run_outcome},${remediation_category},${next_command}" >> "${NEXT_ROLLOUT_CSV_FILE}"
+          sep=","
+          [[ "${rank}" -eq 1 ]] && sep=""
+          cat >> "${NEXT_ROLLOUT_JSON_FILE}" <<EOF
+        ${sep}
+          {
+            "rank": ${rank},
+            "repo": "${repo_name}",
+            "priority_score": ${score},
+            "recommended_action": "${recommended_action}",
+            "run_outcome": "${run_outcome}",
+            "remediation_category": "${remediation_category}",
+            "next_command": "${next_command}"
+          }
+        EOF
+        done < "${NEXT_ROLLOUT_TSV}"
+        echo "]" >> "${NEXT_ROLLOUT_JSON_FILE}"
+        echo "Decision CSV: ${DECISION_CSV_FILE}"
+        echo "Decision JSON: ${DECISION_JSON_FILE}"
+        echo "Next rollout CSV: ${NEXT_ROLLOUT_CSV_FILE}"
+        echo "Next rollout JSON: ${NEXT_ROLLOUT_JSON_FILE}"
         if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
           {
             echo "## Stage-Gates Canary Summary (${RUN_STAMP})"
             echo ""
             cat "${SUMMARY_TABLE_FILE}"
+            echo ""
+            echo "### Rollout Decision"
+            echo ""
+            cat "${DECISION_CSV_FILE}"
           } >> "${GITHUB_STEP_SUMMARY}"
         fi
