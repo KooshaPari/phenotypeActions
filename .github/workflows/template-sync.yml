@@ -28,18 +28,20 @@ jobs:
   template-sync:
     name: Sync Governance Templates
     runs-on: ubuntu-latest
+    env:
+      REPO_OWNER: ${{ github.repository_owner }}
     steps:
       - name: Checkout phenotypeActions
         uses: actions/checkout@v4
         with:
-          repository: Phenotype/repos/phenotypeActions
+          repository: ${{ github.repository }}
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout template-commons
         uses: actions/checkout@v4
         with:
-          repository: Phenotype/repos/template-commons
+          repository: ${{ env.REPO_OWNER }}/template-commons
           path: template-commons
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -75,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          for slug in "Phenotype/repos/template-commons" "Phenotype/repos/phenotype-config"; do
+          for slug in "${REPO_OWNER}/template-commons" "${REPO_OWNER}/phenotype-config"; do
             if ! visibility="$(gh repo view "$slug" --json visibility -q '.visibility' 2>/dev/null)"; then
               echo "ERROR: cannot access required repo $slug with current token"
               exit 1
@@ -90,6 +92,7 @@ jobs:
           target_repos: ${{ steps.set-repos.outputs.repos }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_owner: ${{ env.REPO_OWNER }}
           base_branch: "main"
 
       - name: Notify on completion

@@ -20,6 +20,10 @@ inputs:
   github_token:
     description: GitHub token for creating PRs
     required: true
+  repo_owner:
+    description: GitHub owner/org for target repos (default: current repository owner)
+    required: false
+    default: "Phenotype"
   base_branch:
     description: Base branch to create PRs against (default: main)
     required: false
@@ -57,6 +61,7 @@ runs:
         TARGET_REPOS: ${{ inputs.target_repos }}
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
+        REPO_OWNER: ${{ inputs.repo_owner }}
         BASE_BRANCH: ${{ inputs.base_branch }}
         WORKSPACE_ROOT: ${{ github.workspace }}
       run: |
@@ -80,7 +85,7 @@ runs:
           if [[ "$value" == *"/"* ]]; then
             echo "$value"
           else
-            echo "Phenotype/repos/$value"
+            echo "${REPO_OWNER}/$value"
           fi
         }
 
@@ -105,7 +110,7 @@ runs:
         if ! require_repo_access "$(normalize_repo_slug "${TEMPLATE_REPO}")" "template source repo"; then
           exit 1
         fi
-        if ! require_repo_access "Phenotype/repos/phenotype-config" "phenotype-config"; then
+        if ! require_repo_access "${REPO_OWNER}/phenotype-config" "phenotype-config"; then
           exit 1
         fi
 
