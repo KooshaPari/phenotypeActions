@@ -19,14 +19,104 @@ on:
         options:
           - "false"
           - "true"
+      strictness_mode:
+        description: "Triad enforcement mode for the sync action"
+        required: false
+        default: "strict"
+        type: choice
+        options:
+          - "strict"
+          - "non-strict"
 
 permissions:
   contents: read
   pull-requests: write
 
 jobs:
+  canary-non-strict:
+    name: Canary Drift Audit (non-strict)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout phenotypeActions
+        uses: actions/checkout@v4
+        with:
+          repository: Phenotype/repos/phenotypeActions
+          path: phenotypeActions
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout template-commons
+        uses: actions/checkout@v4
+        with:
+          repository: Phenotype/repos/template-commons
+          path: template-commons
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set target repos
+        id: set-repos
+        shell: bash
+        env:
+          USER_REPOS: ${{ github.event.inputs.target_repos }}
+        run: |
+          if [[ -n "$USER_REPOS" ]]; then
+            echo "repos=$USER_REPOS" >> "$GITHUB_OUTPUT"
+          else
+            echo "repos=thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run template sync action in non-strict canary mode
+        uses: ./phenotypeActions/actions/template-sync
+        with:
+          template_repo: "template-commons"
+          target_repos: ${{ steps.set-repos.outputs.repos }}
+          dry_run: "true"
+          strictness_mode: "non-strict"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          base_branch: "main"
+
+  canary-strict:
+    name: Canary Drift Audit (strict)
+    needs: canary-non-strict
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout phenotypeActions
+        uses: actions/checkout@v4
+        with:
+          repository: Phenotype/repos/phenotypeActions
+          path: phenotypeActions
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout template-commons
+        uses: actions/checkout@v4
+        with:
+          repository: Phenotype/repos/template-commons
+          path: template-commons
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set target repos
+        id: set-repos
+        shell: bash
+        env:
+          USER_REPOS: ${{ github.event.inputs.target_repos }}
+        run: |
+          if [[ -n "$USER_REPOS" ]]; then
+            echo "repos=$USER_REPOS" >> "$GITHUB_OUTPUT"
+          else
+            echo "repos=thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run template sync action in strict canary mode
+        uses: ./phenotypeActions/actions/template-sync
+        with:
+          template_repo: "template-commons"
+          target_repos: ${{ steps.set-repos.outputs.repos }}
+          dry_run: "true"
+          strictness_mode: "strict"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          base_branch: "main"
+
   template-sync:
     name: Sync Governance Templates
+    needs: canary-strict
     runs-on: ubuntu-latest
     steps:
       - name: Checkout phenotypeActions
@@ -74,6 +164,7 @@ jobs:
           template_repo: "template-commons"
           target_repos: ${{ steps.set-repos.outputs.repos }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
+          strictness_mode: ${{ github.event.inputs.strictness_mode || 'strict' }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: "main"
 

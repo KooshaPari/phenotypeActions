@@ -24,6 +24,10 @@ inputs:
     description: "Base branch to create PRs against (default: main)"
     required: false
     default: "main"
+  strictness_mode:
+    description: "Triad enforcement mode: strict or non-strict"
+    required: false
+    default: "strict"
 
 runs:
   using: composite
@@ -67,6 +71,7 @@ runs:
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
         BASE_BRANCH: ${{ inputs.base_branch }}
+        STRICTNESS_MODE: ${{ inputs.strictness_mode }}
       run: |
         set -euo pipefail
 
@@ -102,6 +107,7 @@ runs:
         log_info "Template repo: ${TEMPLATE_REPO}"
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
+        log_info "Strictness mode: ${STRICTNESS_MODE}"
         echo ""
 
         # Parse target repos
@@ -147,22 +153,85 @@ runs:
             fi
           done
 
-          # Check for workflow drift (verify composite action references)
+          # Check for workflow drift (verify reusable workflow references)
           workflows_dir="${repo_path}/.github/workflows"
           if [[ -d "$workflows_dir" ]]; then
-            for workflow in policy-gate lint-test; do
-              workflow_file=$(find "$workflows_dir" -name "*${workflow}*.yml" -o -name "*${workflow}*.yaml" 2>/dev/null | head -1)
+            policy_gate_file=$(find "$workflows_dir" -name "*policy-gate*.yml" -o -name "*policy-gate*.yaml" 2>/dev/null | head -1)
+            stage_gates_file=$(find "$workflows_dir" -name "*stage-gates*.yml" -o -name "*stage-gates*.yaml" 2>/dev/null | head -1)
 
-              if [[ -n "$workflow_file" ]]; then
-                if ! grep -q "phenotypeActions/actions/${workflow}" "$workflow_file" 2>/dev/null; then
-                  log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
-                  drift_detected=true
-                fi
-              else
-                log_warning "${repo_name}: ${workflow} workflow not found"
-                drift_detected=true
-              fi
-            done
+            if [[ -z "$policy_gate_file" ]]; then
+              log_warning "${repo_name}: policy-gate workflow not found"
+              drift_detected=true
+            elif ! grep -q "phenotypeActions/.github/workflows/policy-gate.yml" "$policy_gate_file" 2>/dev/null; then
+              log_warning "${repo_name}: policy-gate workflow is not pinned to reusable phenotypeActions policy-gate"
+              drift_detected=true
+            fi
+
+            if [[ -z "$stage_gates_file" ]]; then
+              log_warning "${repo_name}: stage-gates workflow not found"
+              drift_detected=true
+            elif ! grep -q "phenotypeActions/.github/workflows/stage-gates.yml" "$stage_gates_file" 2>/dev/null; then
+              log_warning "${repo_name}: stage-gates workflow is not pinned to reusable phenotypeActions stage-gates"
+              drift_detected=true
+            fi
+          else
+            log_warning "${repo_name}: workflows directory missing"
+            drift_detected=true
+          fi
+
+          # Strictness triad checks: format/lint/unit command compatibility
+          has_format=false
+          has_lint=false
+          has_unit=false
+
+          makefile_path="${repo_path}/Makefile"
+          justfile_path="${repo_path}/justfile"
+
+          if [[ -f "$makefile_path" ]]; then
+            grep -Eq '^[[:space:]]*format:' "$makefile_path" && has_format=true
+            grep -Eq '^[[:space:]]*lint:' "$makefile_path" && has_lint=true
+            grep -Eq '^[[:space:]]*unit:' "$makefile_path" && has_unit=true
+          fi
+
+          if [[ -f "$justfile_path" ]]; then
+            grep -Eq '^[[:space:]]*format:' "$justfile_path" && has_format=true
+            grep -Eq '^[[:space:]]*lint:' "$justfile_path" && has_lint=true
+            grep -Eq '^[[:space:]]*unit:' "$justfile_path" && has_unit=true
+          fi
+
+          if [[ -f "${repo_path}/Cargo.toml" ]]; then
+            has_format=true
+            has_lint=true
+            has_unit=true
+          elif [[ -f "${repo_path}/go.mod" ]]; then
+            has_format=true
+            has_lint=true
+            has_unit=true
+          elif [[ -f "${repo_path}/pyproject.toml" || -f "${repo_path}/setup.py" ]]; then
+            has_format=true
+            has_lint=true
+            has_unit=true
+          elif [[ -f "${repo_path}/package.json" ]]; then
+            has_unit=true
+            if grep -Eq '"lint"[[:space:]]*:' "${repo_path}/package.json"; then
+              has_lint=true
+            fi
+            if grep -Eq '"format"[[:space:]]*:' "${repo_path}/package.json"; then
+              has_format=true
+            fi
+          fi
+
+          triad_missing=()
+          [[ "$has_format" == true ]] || triad_missing+=("format")
+          [[ "$has_lint" == true ]] || triad_missing+=("lint")
+          [[ "$has_unit" == true ]] || triad_missing+=("unit")
+
+          if [[ ${#triad_missing[@]} -gt 0 ]]; then
+            log_warning "${repo_name}: strictness-triad gaps detected: ${triad_missing[*]}"
+            drift_detected=true
+            if [[ "$STRICTNESS_MODE" == "strict" ]]; then
+              fail "${repo_name}: strictness mode is strict and triad requirements are not satisfied"
+            fi
           fi
 
           if [[ "$drift_detected" == true ]]; then
