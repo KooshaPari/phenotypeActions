@@ -28,6 +28,10 @@ inputs:
     description: Base branch to create PRs against (default: main)
     required: false
     default: "main"
+  fallback_owner:
+    description: Fallback owner/org for dependency and target repo access checks
+    required: false
+    default: "KooshaPari"
 
 runs:
   using: composite
@@ -62,6 +66,7 @@ runs:
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
         REPO_OWNER: ${{ inputs.repo_owner }}
+        FALLBACK_OWNER: ${{ inputs.fallback_owner }}
         BASE_BRANCH: ${{ inputs.base_branch }}
         WORKSPACE_ROOT: ${{ github.workspace }}
       run: |
@@ -89,15 +94,35 @@ runs:
           fi
         }
 
-        require_repo_access() {
-          local slug="$1"
+        resolve_repo_access() {
+          local repo_name_or_slug="$1"
           local label="$2"
           local visibility
-          if ! visibility="$(gh repo view "$slug" --json visibility -q '.visibility' 2>/dev/null)"; then
-            log_error "Cannot access ${label} (${slug}) with provided token"
-            return 1
+          local primary_slug
+          local fallback_slug
+
+          if [[ "$repo_name_or_slug" == *"/"* ]]; then
+            primary_slug="$repo_name_or_slug"
+            fallback_slug="$repo_name_or_slug"
+          else
+            primary_slug="${REPO_OWNER}/${repo_name_or_slug}"
+            fallback_slug="${FALLBACK_OWNER}/${repo_name_or_slug}"
           fi
-          log_success "${label} accessible (${slug}, visibility=${visibility})"
+
+          if visibility="$(gh repo view "$primary_slug" --json visibility -q '.visibility' 2>/dev/null)"; then
+            log_success "${label} accessible (${primary_slug}, visibility=${visibility})"
+            echo "$primary_slug"
+            return 0
+          fi
+
+          if [[ "$fallback_slug" != "$primary_slug" ]] && visibility="$(gh repo view "$fallback_slug" --json visibility -q '.visibility' 2>/dev/null)"; then
+            log_warning "${label} not reachable in primary namespace (${primary_slug}); using fallback (${fallback_slug}, visibility=${visibility})"
+            echo "$fallback_slug"
+            return 0
+          fi
+
+          log_error "Cannot access ${label} in primary (${primary_slug}) or fallback (${fallback_slug}) with provided token"
+          return 1
         }
 
         # Verify checked out template repo exists and can be read
@@ -107,10 +132,10 @@ runs:
         fi
 
         # Explicit preflight checks requested for rollout safety
-        if ! require_repo_access "$(normalize_repo_slug "${TEMPLATE_REPO}")" "template source repo"; then
+        if ! template_repo_slug="$(resolve_repo_access "${TEMPLATE_REPO}" "template source repo")"; then
           exit 1
         fi
-        if ! require_repo_access "${REPO_OWNER}/phenotype-config" "phenotype-config"; then
+        if ! phenotype_config_slug="$(resolve_repo_access "phenotype-config" "phenotype-config")"; then
           exit 1
         fi
 
