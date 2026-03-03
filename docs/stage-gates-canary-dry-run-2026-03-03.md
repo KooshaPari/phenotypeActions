@@ -26,21 +26,26 @@
 6. Run ID `22606340304` - `success`
    - URL: https://github.com/KooshaPari/phenotypeActions/actions/runs/22606340304
    - Result: workflow completed with dependency checkout fallback logic and produced readiness matrix output.
+7. Run ID `22631922418` - `success`
+   - URL: https://github.com/KooshaPari/phenotypeActions/actions/runs/22631922418
+   - Result: workflow completed with machine-readable remediation categories, owner/token hints, and summary table artifact output.
 
-## Canary Outcomes (Run `22606340304`)
+## Canary Outcomes (Run `22631922418`)
 
-- `civ`: clone/access failed from runner token context (`Repo not found/unreachable`), no drift row emitted.
-- `trash-cli`: analyzed successfully; drift detected (workflow/stage-gates/strictness), canary readiness remains `false`.
+- `civ`: `repo_unreachable`, category `access_repo_unreachable`, owner hint `verify owner=KooshaPari`, token hint `contents:read + repo visibility`.
+- `trash-cli`: `strictness_drift`, category `strictness_signal_alignment_required`, owner hint `owner=KooshaPari`, token hint `repo_read_required`.
 
-Matrix artifact path logged by run:
-- `/home/runner/work/phenotypeActions/phenotypeActions/phenotypeActions/docs/stage-gates-canary-readiness-matrix-20260303T030430Z.csv`
+Artifacts:
+- `stage-gates-canary-readiness-matrix-22631922418-1.csv`
+- `stage-gates-canary-remediation-22631922418-1.md`
+- `stage-gates-canary-summary-table-22631922418-1.md`
 
 ## Outcome
 
 - Canary dry-run lane now executes successfully in hosted GitHub Actions after checkout/dependency fixes.
 - Remaining blockers are target-repo accessibility (`civ`) and template/contract drift in reachable repos (`trash-cli`).
 - Rollout progression now uses objective phase criteria:
-  - `hold`: <80% analyzed or any `repo_unreachable`
-  - `phase-1`: 100% analyzed and >=50% canary-ready
-  - `phase-2`: 100% analyzed and >=80% canary-ready
-  - `broad`: 100% analyzed and 100% canary-ready for 2 consecutive runs
+  - `hold` fail: analyzed coverage <100% or any `repo_unreachable`
+  - `phase-1` pass: analyzed coverage =100% and >=50% canary-ready
+  - `phase-2` pass: analyzed coverage =100% and >=80% canary-ready
+  - `broad` pass: analyzed coverage =100% and 100% canary-ready for 2 consecutive runs
