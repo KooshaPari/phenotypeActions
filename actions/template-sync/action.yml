@@ -6,11 +6,11 @@ description: |
 
 inputs:
   template_repo:
-    description: Source template repository (default: template-commons)
+    description: "Source template repository (default: template-commons)"
     required: false
     default: "template-commons"
   target_repos:
-    description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
+    description: "Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)"
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
   dry_run:
@@ -21,7 +21,7 @@ inputs:
     description: GitHub token for creating PRs
     required: true
   base_branch:
-    description: Base branch to create PRs against (default: main)
+    description: "Base branch to create PRs against (default: main)"
     required: false
     default: "main"
 
@@ -47,8 +47,17 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github_token }}
       run: |
-        # Configure gh CLI with provided token
-        gh auth status || true
+        set -euo pipefail
+        if [[ -z "${GH_TOKEN:-}" ]]; then
+          echo "ERROR: inputs.github_token is required and was empty"
+          exit 1
+        fi
+        if ! gh auth status >/dev/null 2>&1; then
+          echo "ERROR: gh auth failed for provided token"
+          echo "ACTION: verify token is valid and has repo scope (contents:write, pull_requests:write)"
+          exit 1
+        fi
+        echo "GitHub authentication preflight passed"
 
     - name: Detect drift and create sync PRs
       shell: bash
@@ -58,7 +67,6 @@ runs:
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
         BASE_BRANCH: ${{ inputs.base_branch }}
-        PHENOTYPE_ROOT: /Users/kooshapari/CodeProjects/Phenotype/repos
       run: |
         set -euo pipefail
 
@@ -73,14 +81,24 @@ runs:
         log_success() { echo -e "${GREEN}✓${NC} $*"; }
         log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
         log_error() { echo -e "${RED}✗${NC} $*"; }
+        fail() { log_error "$*"; exit 1; }
+
+        action_root="${GITHUB_ACTION_PATH:-.}"
+        phenotype_root="$(dirname "$(dirname "${action_root}")")"
+        template_root="${phenotype_root}/${TEMPLATE_REPO}"
 
         # Verify template repo exists
-        if [[ ! -d "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}" ]]; then
-          log_error "Template repo not found: ${PHENOTYPE_ROOT}/${TEMPLATE_REPO}"
-          exit 1
+        if [[ ! -d "${template_root}" ]]; then
+          fail "Template repo not found: ${template_root}"
+        fi
+        [[ -n "${GH_TOKEN:-}" ]] || fail "GH token is empty"
+        gh auth status >/dev/null 2>&1 || fail "gh authentication lost before sync run"
+        if ! gh api -X GET /user/repos -f per_page=1 >/dev/null 2>&1; then
+          fail "Token cannot list repos. Required scopes/permissions are missing."
         fi
 
         log_info "Template Sync"
+        log_info "Resolved phenotype root: ${phenotype_root}"
         log_info "Template repo: ${TEMPLATE_REPO}"
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
@@ -95,7 +113,7 @@ runs:
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
-          repo_path="${PHENOTYPE_ROOT}/${repo_name}"
+          repo_path="${phenotype_root}/${repo_name}"
 
           if [[ ! -d "$repo_path" ]]; then
             log_warning "Repo not found (skipping): ${repo_name}"
@@ -109,7 +127,7 @@ runs:
 
           # Check for governance file drift
           for file in "AGENTS.md" "CLAUDE.md"; do
-            template_file="${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/${file}"
+            template_file="${template_root}/templates/${file}"
             target_file="${repo_path}/${file}"
 
             if [[ ! -f "$template_file" ]]; then
@@ -160,42 +178,41 @@ runs:
               cd "$repo_path"
 
               # Create and checkout new branch
-              git fetch origin "$BASE_BRANCH" 2>/dev/null || true
-              git checkout -b "$branch_name" "origin/${BASE_BRANCH}" 2>/dev/null || git checkout -b "$branch_name"
+              if ! git fetch origin "$BASE_BRANCH"; then
+                fail "${repo_name}: failed to fetch origin/${BASE_BRANCH}"
+              fi
+              if ! git checkout -b "$branch_name" "origin/${BASE_BRANCH}"; then
+                fail "${repo_name}: failed to create branch from origin/${BASE_BRANCH}"
+              fi
 
               # Copy updated files
-              cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
-              cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+              cp "${template_root}/templates/AGENTS.md" "./AGENTS.md"
+              cp "${template_root}/templates/CLAUDE.md" "./CLAUDE.md"
 
               # Stage changes
-              git add AGENTS.md CLAUDE.md 2>/dev/null || true
+              git add AGENTS.md CLAUDE.md
 
               # Commit if there are changes
               if ! git diff --cached --quiet; then
-                git commit -m "automation: sync governance templates from ${TEMPLATE_REPO}
-
-This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from the
-template-commons repository to maintain consistency across Phenotype repos.
-
-Generated by template-sync automation." 2>/dev/null || true
+                git commit \
+                  -m "automation: sync governance templates from ${TEMPLATE_REPO}" \
+                  -m "This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from template-commons." \
+                  -m "Generated by template-sync automation." \
+                  -m "Co-authored-by: Codex <noreply@openai.com>"
               fi
 
               # Push branch and create PR
-              git push origin "$branch_name" 2>/dev/null || true
+              if ! git push origin "$branch_name"; then
+                fail "${repo_name}: failed to push ${branch_name}"
+              fi
 
               # Create PR using gh CLI
               pr_output=$(gh pr create \
                 --title "automation: sync templates from ${TEMPLATE_REPO}" \
-                --body "This PR synchronizes governance files from ${TEMPLATE_REPO}.
-
-Governance templates synchronized:
-- AGENTS.md
-- CLAUDE.md
-
-Please review and merge if changes are acceptable." \
+                --body "This PR synchronizes governance files (AGENTS.md, CLAUDE.md) from ${TEMPLATE_REPO}. Please review and merge if acceptable." \
                 --base "$BASE_BRANCH" \
                 --head "$branch_name" \
-                2>/dev/null || echo "")
+                2>&1) || fail "${repo_name}: failed to create PR: ${pr_output}"
 
               if [[ -n "$pr_output" ]]; then
                 log_success "${repo_name}: PR created"
