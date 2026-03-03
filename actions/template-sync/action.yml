@@ -6,24 +6,28 @@ description: |
 
 inputs:
   template_repo:
-    description: Source template repository (default: template-commons)
+    description: "Source template repository (default: template-commons)"
     required: false
     default: "template-commons"
   target_repos:
-    description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
+    description: "Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)"
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
   dry_run:
-    description: If true, report drift but do not create PRs
+    description: "If true, report drift but do not create PRs"
     required: false
     default: "false"
   github_token:
-    description: GitHub token for creating PRs
+    description: "GitHub token for creating PRs"
     required: true
   base_branch:
-    description: Base branch to create PRs against (default: main)
+    description: "Base branch to create PRs against (default: main)"
     required: false
     default: "main"
+  repo_owner:
+    description: "GitHub organization or user owner for template and target repos (defaults to github.repository_owner)"
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -58,7 +62,9 @@ runs:
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
         BASE_BRANCH: ${{ inputs.base_branch }}
-        PHENOTYPE_ROOT: /Users/kooshapari/CodeProjects/Phenotype/repos
+        REPO_OWNER: ${{ inputs.repo_owner }}
+        GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        WORK_ROOT: ${{ runner.temp }}/template-sync
       run: |
         set -euo pipefail
 
@@ -74,17 +80,28 @@ runs:
         log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
         log_error() { echo -e "${RED}✗${NC} $*"; }
 
-        # Verify template repo exists
-        if [[ ! -d "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}" ]]; then
-          log_error "Template repo not found: ${PHENOTYPE_ROOT}/${TEMPLATE_REPO}"
+        OWNER="${REPO_OWNER:-${GITHUB_REPOSITORY_OWNER:-}}"
+        if [[ -z "$OWNER" ]]; then
+          log_error "Repository owner could not be determined"
           exit 1
         fi
 
+        rm -rf "${WORK_ROOT}"
+        mkdir -p "${WORK_ROOT}"
+
         log_info "Template Sync"
+        log_info "Repo owner: ${OWNER}"
         log_info "Template repo: ${TEMPLATE_REPO}"
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
         echo ""
+
+        # Clone template repo for runtime portability on GitHub-hosted runners
+        log_info "Cloning template repository..."
+        if ! gh repo clone "${OWNER}/${TEMPLATE_REPO}" "${WORK_ROOT}/${TEMPLATE_REPO}" -- -q; then
+          log_error "Failed to clone template repo: ${OWNER}/${TEMPLATE_REPO}"
+          exit 1
+        fi
 
         # Parse target repos
         IFS=',' read -ra repos <<< "$TARGET_REPOS"
@@ -95,10 +112,10 @@ runs:
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
-          repo_path="${PHENOTYPE_ROOT}/${repo_name}"
+          repo_path="${WORK_ROOT}/${repo_name}"
 
-          if [[ ! -d "$repo_path" ]]; then
-            log_warning "Repo not found (skipping): ${repo_name}"
+          if ! gh repo clone "${OWNER}/${repo_name}" "${repo_path}" -- -q 2>/dev/null; then
+            log_warning "Repo not found or inaccessible (skipping): ${OWNER}/${repo_name}"
             continue
           fi
 
@@ -109,7 +126,7 @@ runs:
 
           # Check for governance file drift
           for file in "AGENTS.md" "CLAUDE.md"; do
-            template_file="${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/${file}"
+            template_file="${WORK_ROOT}/${TEMPLATE_REPO}/templates/${file}"
             target_file="${repo_path}/${file}"
 
             if [[ ! -f "$template_file" ]]; then
@@ -136,7 +153,7 @@ runs:
               workflow_file=$(find "$workflows_dir" -name "*${workflow}*.yml" -o -name "*${workflow}*.yaml" 2>/dev/null | head -1)
 
               if [[ -n "$workflow_file" ]]; then
-                if ! grep -q "phenotypeActions/actions/${workflow}" "$workflow_file" 2>/dev/null; then
+                if ! grep -Eq "phenotypeActions/(\\.github/actions|actions)/${workflow}|reusable-${workflow}\\.yml@" "$workflow_file" 2>/dev/null; then
                   log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
                   drift_detected=true
                 fi
@@ -164,20 +181,19 @@ runs:
               git checkout -b "$branch_name" "origin/${BASE_BRANCH}" 2>/dev/null || git checkout -b "$branch_name"
 
               # Copy updated files
-              cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
-              cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+              cp "${WORK_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
+              cp "${WORK_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
 
               # Stage changes
               git add AGENTS.md CLAUDE.md 2>/dev/null || true
 
               # Commit if there are changes
               if ! git diff --cached --quiet; then
-                git commit -m "automation: sync governance templates from ${TEMPLATE_REPO}
-
-This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from the
-template-commons repository to maintain consistency across Phenotype repos.
-
-Generated by template-sync automation." 2>/dev/null || true
+                git commit \
+                  -m "automation: sync governance templates from ${TEMPLATE_REPO}" \
+                  -m "This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from the template-commons repository to maintain consistency across Phenotype repos." \
+                  -m "Generated by template-sync automation." \
+                  2>/dev/null || true
               fi
 
               # Push branch and create PR
@@ -186,13 +202,7 @@ Generated by template-sync automation." 2>/dev/null || true
               # Create PR using gh CLI
               pr_output=$(gh pr create \
                 --title "automation: sync templates from ${TEMPLATE_REPO}" \
-                --body "This PR synchronizes governance files from ${TEMPLATE_REPO}.
-
-Governance templates synchronized:
-- AGENTS.md
-- CLAUDE.md
-
-Please review and merge if changes are acceptable." \
+                --body $'This PR synchronizes governance files from '"${TEMPLATE_REPO}"$'.\n\nGovernance templates synchronized:\n- AGENTS.md\n- CLAUDE.md\n\nPlease review and merge if changes are acceptable.' \
                 --base "$BASE_BRANCH" \
                 --head "$branch_name" \
                 2>/dev/null || echo "")
