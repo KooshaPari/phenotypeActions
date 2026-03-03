@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REPO_OWNER: ${{ github.repository_owner }}
-      FALLBACK_OWNER: KooshaPari
+      FALLBACK_OWNER: Phenotype
     steps:
       - name: Checkout phenotypeActions
         uses: actions/checkout@v4

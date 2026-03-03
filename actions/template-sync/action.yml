@@ -31,7 +31,7 @@ inputs:
   fallback_owner:
     description: Fallback owner/org for dependency and target repo access checks
     required: false
-    default: "KooshaPari"
+    default: "Phenotype"
 
 runs:
   using: composite
