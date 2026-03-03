@@ -29,6 +29,9 @@
 7. Run ID `22631922418` - `success`
    - URL: https://github.com/KooshaPari/phenotypeActions/actions/runs/22631922418
    - Result: workflow completed with machine-readable remediation categories, owner/token hints, and summary table artifact output.
+8. Run ID `22633353020` - `success`
+   - URL: https://github.com/KooshaPari/phenotypeActions/actions/runs/22633353020
+   - Result: workflow completed with explicit rollout decision JSON/CSV and ranked next-repo rollout JSON/CSV outputs.
 
 ## Canary Outcomes (Run `22631922418`)
 
@@ -49,3 +52,24 @@ Artifacts:
   - `phase-1` pass: analyzed coverage =100% and >=50% canary-ready
   - `phase-2` pass: analyzed coverage =100% and >=80% canary-ready
   - `broad` pass: analyzed coverage =100% and 100% canary-ready for 2 consecutive runs
+
+## Canary Outcomes (Run `22633353020`)
+
+- Decision: `hold` (`decision_reason=insufficient_thresholds`)
+- Coverage: `50%` (`1/2` repos analyzed)
+- Canary-ready: `0%` (`0/1` analyzed repos ready)
+
+Deterministic captured artifacts:
+- `docs/stage-gates-canary-readiness-matrix-2026-03-03-run-22633353020.csv`
+- `docs/stage-gates-canary-remediation-2026-03-03-run-22633353020.md`
+- `docs/stage-gates-canary-summary-table-2026-03-03-run-22633353020.md`
+- `docs/stage-gates-canary-decision-2026-03-03-run-22633353020.csv`
+- `docs/stage-gates-canary-decision-2026-03-03-run-22633353020.json`
+- `docs/stage-gates-next-repo-rollout-2026-03-03-run-22633353020.csv`
+- `docs/stage-gates-next-repo-rollout-2026-03-03-run-22633353020.json`
+
+Ranked next-repo rollout list (current thresholds/artifacts):
+1. `trash-cli` (priority_score `10`, action `fix_then_retry`)
+   - Next command: `rg -n "severity:[[:space:]]*info|comment_severity_threshold:[[:space:]]*LOW|STAGE_GATES_STRICT" trash-cli/.coderabbit.yaml trash-cli/.gemini/config.yaml trash-cli/.github/workflows/stage-gates.yml`
+2. `civ` (priority_score `0`, action `fix_then_retry`)
+   - Next command: `gh repo view KooshaPari/civ || gh auth refresh -h github.com -s repo`
