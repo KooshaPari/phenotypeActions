@@ -8,13 +8,19 @@ Primary evidence run: `22606340304` (successful workflow execution).
 | civ | repo_unreachable | false | false | false | false | false | false | verify `KooshaPari/civ` visibility and token read scope |
 | trash-cli | strictness_drift | false | true | true | true | false | false | apply stage-gates contract template and strictness policy wiring |
 
-## Rollout Recommendation
+## Phase-Gate Rollout Criteria
 
-Use phase gates with objective thresholds:
+Pass/fail thresholds (deterministic):
 
-- `hold`: fewer than 80% canary repos analyzed, or any `repo_unreachable` outcome.
-- `phase-1`: 100% canary repos analyzed and at least 50% `canary_ready=true`.
-- `phase-2`: 100% canary repos analyzed and at least 80% `canary_ready=true`.
-- `broad`: 100% canary repos analyzed and 100% `canary_ready=true` for 2 consecutive runs.
+- `hold` fail conditions: analyzed coverage `< 100%`, or any `run_outcome=repo_unreachable`.
+- `phase-1` pass conditions: analyzed coverage `= 100%` and `canary_ready=true` for at least `50%` of canary repos.
+- `phase-2` pass conditions: analyzed coverage `= 100%` and `canary_ready=true` for at least `80%` of canary repos.
+- `broad` pass conditions: analyzed coverage `= 100%` and `canary_ready=true` for `100%` of canary repos across `2` consecutive runs.
 
-Current state (2026-03-03): `hold` because `civ` is `repo_unreachable` and 0/2 repos are `canary_ready=true`.
+Current state (2026-03-03): `hold` (fail) because `civ` is `repo_unreachable`, analyzed coverage is below `100%`, and readiness is `0/2`.
+
+Next candidate repos (only after phase-1 pass):
+
+- `parpour`
+- `phenodocs`
+- `tokenledger`

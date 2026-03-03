@@ -202,13 +202,20 @@ runs:
         MATRIX_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-readiness-matrix-${RUN_STAMP}.csv"
         SUMMARY_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-remediation-${RUN_STAMP}.md"
         mkdir -p "$(dirname "${MATRIX_FILE}")"
-        echo "repo,run_outcome,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint" > "${MATRIX_FILE}"
+        echo "repo,run_outcome,remediation_category,owner_hint,token_hint,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint" > "${MATRIX_FILE}"
         {
           echo "# Stage-Gates Canary Remediation Summary (${RUN_STAMP})"
           echo ""
           echo "| repo | run_outcome | remediation_hint |"
           echo "| --- | --- | --- |"
         } > "${SUMMARY_FILE}"
+        SUMMARY_TABLE_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-summary-table-${RUN_STAMP}.md"
+        {
+          echo "# Stage-Gates Canary Summary Table (${RUN_STAMP})"
+          echo ""
+          echo "| repo | run_outcome | remediation_category | owner_hint | token_hint | stage_gates_ready | canary_ready |"
+          echo "| --- | --- | --- | --- | --- | --- | --- |"
+        } > "${SUMMARY_TABLE_FILE}"
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
@@ -218,9 +225,13 @@ runs:
             log_info "Cloning ${REPO_OWNER}/${repo_name}..."
             if ! gh repo clone "${REPO_OWNER}/${repo_name}" "$repo_path" -- --depth 1 >/dev/null 2>&1; then
               log_warning "Repo not found/unreachable (skipping): ${repo_name}"
+              remediation_category="access_repo_unreachable"
+              owner_hint="verify owner=${REPO_OWNER}"
+              token_hint="ensure token has contents:read and repo visibility for ${REPO_OWNER}/${repo_name}"
               remediation_hint="repo_unreachable: verify ${REPO_OWNER}/${repo_name} exists and token has repo read access"
-              echo "${repo_name},repo_unreachable,false,false,false,false,false,false,${remediation_hint}" >> "${MATRIX_FILE}"
+              echo "${repo_name},repo_unreachable,${remediation_category},${owner_hint},${token_hint},false,false,false,false,false,false,${remediation_hint}" >> "${MATRIX_FILE}"
               echo "| ${repo_name} | repo_unreachable | ${remediation_hint} |" >> "${SUMMARY_FILE}"
+              echo "| ${repo_name} | repo_unreachable | ${remediation_category} | ${owner_hint} | ${token_hint} | false | false |" >> "${SUMMARY_TABLE_FILE}"
               continue
             fi
           fi
@@ -315,21 +326,28 @@ runs:
           fi
 
           run_outcome="in_sync"
+          remediation_category="none"
+          owner_hint="owner=${REPO_OWNER}"
+          token_hint="token scope valid"
           remediation_hint="none"
           if [[ "${governance_drift}" == true ]]; then
             run_outcome="governance_drift"
+            remediation_category="template_governance_sync_required"
             remediation_hint="sync AGENTS.md and CLAUDE.md from template source"
           fi
           if [[ "${workflow_drift}" == true ]]; then
             run_outcome="workflow_drift"
+            remediation_category="workflow_composite_wiring_required"
             remediation_hint="wire policy-gate and lint-test workflows to phenotypeActions composite actions"
           fi
           if [[ "${stage_gates_drift}" == true ]]; then
             run_outcome="stage_gates_drift"
+            remediation_category="stage_gates_contract_sync_required"
             remediation_hint="replace .github/workflows/stage-gates.yml with contract template ${STAGE_GATES_TEMPLATE_PATH}"
           fi
           if [[ "${strictness_drift}" == true ]]; then
             run_outcome="strictness_drift"
+            remediation_category="strictness_signal_alignment_required"
             remediation_hint="set CodeRabbit severity=info, Gemini threshold=LOW, and include STAGE_GATES_STRICT wiring"
           fi
 
@@ -339,10 +357,12 @@ runs:
           [[ "${strictness_drift}" == true ]] && canary_ready=false
           if [[ "${drift_detected}" == true && "${run_outcome}" == "in_sync" ]]; then
             run_outcome="manual_review_required"
+            remediation_category="manual_review_required"
             remediation_hint="review logs for drift source and apply contract templates"
           fi
-          echo "${repo_name},${run_outcome},${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready},${remediation_hint}" >> "${MATRIX_FILE}"
+          echo "${repo_name},${run_outcome},${remediation_category},owner=${REPO_OWNER},token=repo_read_required,${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready},${remediation_hint}" >> "${MATRIX_FILE}"
           echo "| ${repo_name} | ${run_outcome} | ${remediation_hint} |" >> "${SUMMARY_FILE}"
+          echo "| ${repo_name} | ${run_outcome} | ${remediation_category} | owner=${REPO_OWNER} | token=repo_read_required | ${stage_gates_ready} | ${canary_ready} |" >> "${SUMMARY_TABLE_FILE}"
 
           if [[ "$drift_detected" == true ]]; then
             DRIFT_REPOS+=("$repo_name")
@@ -427,3 +447,11 @@ runs:
         fi
         echo "Readiness matrix: ${MATRIX_FILE}"
         echo "Remediation summary: ${SUMMARY_FILE}"
+        echo "Summary table: ${SUMMARY_TABLE_FILE}"
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## Stage-Gates Canary Summary (${RUN_STAMP})"
+            echo ""
+            cat "${SUMMARY_TABLE_FILE}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+        fi

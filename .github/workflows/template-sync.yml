@@ -132,6 +132,7 @@ jobs:
           path: |
             phenotypeActions/docs/stage-gates-canary-readiness-matrix-${{ github.run_id }}-${{ github.run_attempt }}.csv
             phenotypeActions/docs/stage-gates-canary-remediation-${{ github.run_id }}-${{ github.run_attempt }}.md
+            phenotypeActions/docs/stage-gates-canary-summary-table-${{ github.run_id }}-${{ github.run_attempt }}.md
           if-no-files-found: warn
 
       - name: Notify on completion
