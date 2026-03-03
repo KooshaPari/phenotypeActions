@@ -89,19 +89,43 @@ runs:
         log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
         log_error() { echo -e "${RED}✗${NC} $*"; }
 
-        # Verify template repo exists
-        if [[ ! -d "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}" ]]; then
-          log_error "Template repo not found: ${PHENOTYPE_ROOT}/${TEMPLATE_REPO}"
-          exit 1
-        fi
-        if [[ ! -d "${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}" ]]; then
-          log_error "Stage-gates repo not found: ${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}"
-          exit 1
-        fi
+        resolve_dependency_repo() {
+          local label="$1"
+          local requested="$2"
+          local fallback_path="$3"
+          local requested_path="${PHENOTYPE_ROOT}/${requested}"
+          local resolved_path=""
+
+          if [[ -d "${requested_path}" ]]; then
+            resolved_path="${requested_path}"
+          elif [[ "${requested}" == */* ]]; then
+            local cloned_dir="${requested##*/}"
+            local clone_path="${PHENOTYPE_ROOT}/${cloned_dir}"
+            log_info "${label}: cloning ${requested} into ${clone_path}"
+            if gh repo clone "${requested}" "${clone_path}" -- --depth 1 >/dev/null 2>&1; then
+              resolved_path="${clone_path}"
+            fi
+          fi
+
+          if [[ -z "${resolved_path}" && -d "${fallback_path}" ]]; then
+            resolved_path="${fallback_path}"
+            log_warning "${label}: using fallback path ${fallback_path}"
+          fi
+
+          if [[ -z "${resolved_path}" ]]; then
+            log_error "${label}: dependency repo unavailable (${requested})"
+            return 1
+          fi
+
+          echo "${resolved_path}"
+        }
+
+        TEMPLATE_REPO_PATH="$(resolve_dependency_repo "Template repo" "${TEMPLATE_REPO}" "${PHENOTYPE_ROOT}/phenotypeActions")"
+        STAGE_GATES_REPO_PATH="$(resolve_dependency_repo "Stage-gates repo" "${STAGE_GATES_REPO}" "${PHENOTYPE_ROOT}/phenotype-config")"
 
         log_info "Template Sync"
-        log_info "Template repo: ${TEMPLATE_REPO}"
-        log_info "Stage-gates repo: ${STAGE_GATES_REPO}"
+        log_info "Template repo: ${TEMPLATE_REPO_PATH}"
+        log_info "Stage-gates repo: ${STAGE_GATES_REPO_PATH}"
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
         echo ""
@@ -140,7 +164,7 @@ runs:
 
           # Check for governance file drift
           for file in "AGENTS.md" "CLAUDE.md"; do
-            template_file="${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/${file}"
+            template_file="${TEMPLATE_REPO_PATH}/templates/${file}"
             target_file="${repo_path}/${file}"
 
             if [[ ! -f "$template_file" ]]; then
@@ -183,7 +207,7 @@ runs:
           fi
 
           # Check for stage-gates workflow drift against canonical contract template
-          stage_gates_template="${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}/${STAGE_GATES_TEMPLATE_PATH}"
+          stage_gates_template="${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH}"
           stage_gates_target="${repo_path}/.github/workflows/stage-gates.yml"
           if [[ ! -f "${stage_gates_template}" ]]; then
             log_warning "Canonical stage-gates template not found: ${STAGE_GATES_TEMPLATE_PATH}"
@@ -241,11 +265,11 @@ runs:
               git checkout -b "$branch_name" "origin/${BASE_BRANCH}" 2>/dev/null || git checkout -b "$branch_name"
 
               # Copy updated files
-              cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
-              cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+              cp "${TEMPLATE_REPO_PATH}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
+              cp "${TEMPLATE_REPO_PATH}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
               mkdir -p ".github/workflows"
-              cp "${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}/${STAGE_GATES_TEMPLATE_PATH}" ".github/workflows/stage-gates.yml" 2>/dev/null || true
-              cp "${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}/templates/.coderabbit.yaml" ".coderabbit.yaml" 2>/dev/null || true
+              cp "${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH}" ".github/workflows/stage-gates.yml" 2>/dev/null || true
+              cp "${STAGE_GATES_REPO_PATH}/templates/.coderabbit.yaml" ".coderabbit.yaml" 2>/dev/null || true
 
               # Stage changes
               git add AGENTS.md CLAUDE.md .github/workflows/stage-gates.yml .coderabbit.yaml 2>/dev/null || true

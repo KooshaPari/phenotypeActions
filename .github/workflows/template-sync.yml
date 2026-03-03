@@ -11,6 +11,14 @@ on:
         description: "Comma-separated list of repos to sync (leave empty for all)"
         required: false
         default: ""
+      template_repo:
+        description: "Template source repo (name or owner/name)"
+        required: false
+        default: "template-commons"
+      stage_gates_repo:
+        description: "Stage-gates contract repo (name or owner/name)"
+        required: false
+        default: "phenotype-config"
       dry_run:
         description: "Dry run mode - report drift but don't create PRs"
         required: false
@@ -28,18 +36,52 @@ jobs:
   template-sync:
     name: Sync Governance Templates
     runs-on: ubuntu-latest
+    env:
+      REPO_OWNER: ${{ github.repository_owner }}
     steps:
       - name: Checkout phenotypeActions
         uses: actions/checkout@v6
         with:
-          repository: KooshaPari/phenotypeActions
+          repository: ${{ github.repository }}
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout phenotype-config
+      - name: Resolve dependency repositories
+        id: resolve-deps
+        shell: bash
+        env:
+          USER_TEMPLATE_REPO: ${{ github.event.inputs.template_repo }}
+          USER_STAGE_GATES_REPO: ${{ github.event.inputs.stage_gates_repo }}
+          DEFAULT_TEMPLATE_REPO: template-commons
+          DEFAULT_STAGE_GATES_REPO: phenotype-config
+        run: |
+          set -euo pipefail
+          resolve_slug() {
+            local repo="$1"
+            if [[ "$repo" == */* ]]; then
+              echo "$repo"
+            else
+              echo "${REPO_OWNER}/${repo}"
+            fi
+          }
+          template_repo="${USER_TEMPLATE_REPO:-$DEFAULT_TEMPLATE_REPO}"
+          stage_gates_repo="${USER_STAGE_GATES_REPO:-$DEFAULT_STAGE_GATES_REPO}"
+          echo "template_slug=$(resolve_slug "$template_repo")" >> "$GITHUB_OUTPUT"
+          echo "stage_gates_slug=$(resolve_slug "$stage_gates_repo")" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout template source
+        continue-on-error: true
         uses: actions/checkout@v6
         with:
-          repository: KooshaPari/phenotype-config
+          repository: ${{ steps.resolve-deps.outputs.template_slug }}
+          path: template-commons
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout stage-gates source
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.resolve-deps.outputs.stage_gates_slug }}
           path: phenotype-config
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -71,11 +113,11 @@ jobs:
       - name: Run template sync action
         uses: ./phenotypeActions/actions/template-sync
         with:
-          template_repo: "phenotypeActions"
+          template_repo: "template-commons"
           stage_gates_repo: "phenotype-config"
           stage_gates_template_path: "templates/stage-gates/v1/stage-gates.yml"
           target_repos: ${{ steps.set-repos.outputs.repos }}
-          repo_owner: "KooshaPari"
+          repo_owner: ${{ env.REPO_OWNER }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           base_branch: "main"
