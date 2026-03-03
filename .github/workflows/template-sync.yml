@@ -36,13 +36,6 @@ jobs:
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout template-commons
-        uses: actions/checkout@v6
-        with:
-          repository: KooshaPari/template-commons
-          path: template-commons
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Checkout phenotype-config
         uses: actions/checkout@v6
         with:
@@ -78,7 +71,7 @@ jobs:
       - name: Run template sync action
         uses: ./phenotypeActions/actions/template-sync
         with:
-          template_repo: "template-commons"
+          template_repo: "phenotypeActions"
           stage_gates_repo: "phenotype-config"
           stage_gates_template_path: "templates/stage-gates/v1/stage-gates.yml"
           target_repos: ${{ steps.set-repos.outputs.repos }}
