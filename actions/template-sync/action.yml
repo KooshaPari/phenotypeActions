@@ -9,6 +9,14 @@ inputs:
     description: Source template repository (default: template-commons)
     required: false
     default: "template-commons"
+  stage_gates_repo:
+    description: Repository containing stage-gates contract templates
+    required: false
+    default: "phenotype-config"
+  stage_gates_template_path:
+    description: Path to canonical stage-gates template inside stage_gates_repo
+    required: false
+    default: "templates/stage-gates/v1/stage-gates.yml"
   target_repos:
     description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
     required: false
@@ -54,6 +62,8 @@ runs:
       shell: bash
       env:
         TEMPLATE_REPO: ${{ inputs.template_repo }}
+        STAGE_GATES_REPO: ${{ inputs.stage_gates_repo }}
+        STAGE_GATES_TEMPLATE_PATH: ${{ inputs.stage_gates_template_path }}
         TARGET_REPOS: ${{ inputs.target_repos }}
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
@@ -79,9 +89,14 @@ runs:
           log_error "Template repo not found: ${PHENOTYPE_ROOT}/${TEMPLATE_REPO}"
           exit 1
         fi
+        if [[ ! -d "${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}" ]]; then
+          log_error "Stage-gates repo not found: ${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}"
+          exit 1
+        fi
 
         log_info "Template Sync"
         log_info "Template repo: ${TEMPLATE_REPO}"
+        log_info "Stage-gates repo: ${STAGE_GATES_REPO}"
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
         echo ""
@@ -92,6 +107,10 @@ runs:
         TOTAL_REPOS=${#repos[@]}
         SYNCED_REPOS=0
         DRIFT_REPOS=()
+        RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+        MATRIX_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-readiness-matrix-${RUN_STAMP}.csv"
+        mkdir -p "$(dirname "${MATRIX_FILE}")"
+        echo "repo,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready" > "${MATRIX_FILE}"
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
@@ -106,6 +125,10 @@ runs:
 
           # Track if drift detected
           drift_detected=false
+          governance_drift=false
+          workflow_drift=false
+          stage_gates_drift=false
+          strictness_drift=false
 
           # Check for governance file drift
           for file in "AGENTS.md" "CLAUDE.md"; do
@@ -120,11 +143,13 @@ runs:
             if [[ ! -f "$target_file" ]]; then
               log_warning "${repo_name}: ${file} missing"
               drift_detected=true
+              governance_drift=true
             else
               # Compare files (excluding repo-specific customizations if any)
               if ! diff -q "$template_file" "$target_file" > /dev/null 2>&1; then
                 log_warning "${repo_name}: ${file} diverges from template"
                 drift_detected=true
+                governance_drift=true
               fi
             fi
           done
@@ -139,13 +164,57 @@ runs:
                 if ! grep -q "phenotypeActions/actions/${workflow}" "$workflow_file" 2>/dev/null; then
                   log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
                   drift_detected=true
+                  workflow_drift=true
                 fi
               else
                 log_warning "${repo_name}: ${workflow} workflow not found"
                 drift_detected=true
+                workflow_drift=true
               fi
             done
           fi
+
+          # Check for stage-gates workflow drift against canonical contract template
+          stage_gates_template="${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}/${STAGE_GATES_TEMPLATE_PATH}"
+          stage_gates_target="${repo_path}/.github/workflows/stage-gates.yml"
+          if [[ ! -f "${stage_gates_template}" ]]; then
+            log_warning "Canonical stage-gates template not found: ${STAGE_GATES_TEMPLATE_PATH}"
+            drift_detected=true
+            stage_gates_drift=true
+          elif [[ ! -f "${stage_gates_target}" ]]; then
+            log_warning "${repo_name}: stage-gates workflow missing"
+            drift_detected=true
+            stage_gates_drift=true
+          elif ! diff -q "${stage_gates_template}" "${stage_gates_target}" > /dev/null 2>&1; then
+            log_warning "${repo_name}: stage-gates workflow diverges from contract v1"
+            drift_detected=true
+            stage_gates_drift=true
+          fi
+
+          # Check strictness signal drift for CodeRabbit/Gemini and stage-gates strict variable
+          coderabbit_file="${repo_path}/.coderabbit.yaml"
+          if [[ ! -f "${coderabbit_file}" ]] || ! grep -Eq "severity:[[:space:]]*info" "${coderabbit_file}"; then
+            log_warning "${repo_name}: CodeRabbit strictness signal missing/invalid (expected severity: info)"
+            drift_detected=true
+            strictness_drift=true
+          fi
+          gemini_file="${repo_path}/.gemini/config.yaml"
+          if [[ -f "${gemini_file}" ]] && ! grep -Eq "comment_severity_threshold:[[:space:]]*LOW" "${gemini_file}"; then
+            log_warning "${repo_name}: Gemini strictness signal invalid (expected LOW)"
+            drift_detected=true
+            strictness_drift=true
+          fi
+          if [[ -f "${stage_gates_target}" ]] && ! grep -q "STAGE_GATES_STRICT" "${stage_gates_target}"; then
+            log_warning "${repo_name}: stage-gates strictness signal wiring missing"
+            drift_detected=true
+            strictness_drift=true
+          fi
+
+          stage_gates_ready=true
+          canary_ready=true
+          [[ "${stage_gates_drift}" == true ]] && stage_gates_ready=false
+          [[ "${strictness_drift}" == true ]] && canary_ready=false
+          echo "${repo_name},${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready}" >> "${MATRIX_FILE}"
 
           if [[ "$drift_detected" == true ]]; then
             DRIFT_REPOS+=("$repo_name")
@@ -166,9 +235,12 @@ runs:
               # Copy updated files
               cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
               cp "${PHENOTYPE_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+              mkdir -p ".github/workflows"
+              cp "${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}/${STAGE_GATES_TEMPLATE_PATH}" ".github/workflows/stage-gates.yml" 2>/dev/null || true
+              cp "${PHENOTYPE_ROOT}/${STAGE_GATES_REPO}/templates/.coderabbit.yaml" ".coderabbit.yaml" 2>/dev/null || true
 
               # Stage changes
-              git add AGENTS.md CLAUDE.md 2>/dev/null || true
+              git add AGENTS.md CLAUDE.md .github/workflows/stage-gates.yml .coderabbit.yaml 2>/dev/null || true
 
               # Commit if there are changes
               if ! git diff --cached --quiet; then
@@ -233,3 +305,4 @@ Please review and merge if changes are acceptable." \
         else
           log_success "Synced repos: $SYNCED_REPOS"
         fi
+        echo "Readiness matrix: ${MATRIX_FILE}"
