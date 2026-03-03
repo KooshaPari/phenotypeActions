@@ -1,0 +1,155 @@
+name: Stage Gates
+
+on:
+  workflow_call:
+    inputs:
+      gate_strictness:
+        description: "Strictness mode for command resolution (strict|non-strict)"
+        required: false
+        type: string
+        default: "strict"
+      format_command:
+        description: "Override format command"
+        required: false
+        type: string
+        default: ""
+      lint_command:
+        description: "Override lint command"
+        required: false
+        type: string
+        default: ""
+      unit_command:
+        description: "Override unit-test command"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-triad:
+    name: Resolve Strictness Triad
+    runs-on: ubuntu-latest
+    outputs:
+      lang: ${{ steps.detect.outputs.lang }}
+      format: ${{ steps.resolve.outputs.format }}
+      lint: ${{ steps.resolve.outputs.lint }}
+      unit: ${{ steps.resolve.outputs.unit }}
+      strictness: ${{ steps.resolve.outputs.strictness }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect repository language
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f Cargo.toml ]; then
+            echo "lang=rust" >> "$GITHUB_OUTPUT"
+          elif [ -f go.mod ]; then
+            echo "lang=go" >> "$GITHUB_OUTPUT"
+          elif [ -f pyproject.toml ] || [ -f setup.py ]; then
+            echo "lang=python" >> "$GITHUB_OUTPUT"
+          elif [ -f package.json ]; then
+            echo "lang=node" >> "$GITHUB_OUTPUT"
+          else
+            echo "lang=unknown" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve format/lint/unit command triad
+        id: resolve
+        shell: bash
+        env:
+          LANG_DETECTED: ${{ steps.detect.outputs.lang }}
+          STRICTNESS: ${{ inputs.gate_strictness }}
+          FORMAT_INPUT: ${{ inputs.format_command }}
+          LINT_INPUT: ${{ inputs.lint_command }}
+          UNIT_INPUT: ${{ inputs.unit_command }}
+        run: |
+          set -euo pipefail
+
+          resolve_default() {
+            local kind="$1"
+            local lang="$2"
+            case "$lang:$kind" in
+              rust:format) echo "cargo fmt --check" ;;
+              rust:lint) echo "cargo clippy --all-targets -- -D warnings" ;;
+              rust:unit) echo "cargo test --lib" ;;
+              go:format) echo "test -z \"$(gofmt -l .)\"" ;;
+              go:lint) echo "golangci-lint run" ;;
+              go:unit) echo "go test ./..." ;;
+              python:format) echo "python -m ruff format --check ." ;;
+              python:lint) echo "python -m ruff check ." ;;
+              python:unit) echo "python -m pytest -x" ;;
+              node:format) echo "npx prettier --check ." ;;
+              node:lint) echo "npx eslint ." ;;
+              node:unit) echo "npm test" ;;
+              *) echo "" ;;
+            esac
+          }
+
+          format_cmd="${FORMAT_INPUT}"
+          lint_cmd="${LINT_INPUT}"
+          unit_cmd="${UNIT_INPUT}"
+
+          [ -n "$format_cmd" ] || format_cmd="$(resolve_default format "$LANG_DETECTED")"
+          [ -n "$lint_cmd" ] || lint_cmd="$(resolve_default lint "$LANG_DETECTED")"
+          [ -n "$unit_cmd" ] || unit_cmd="$(resolve_default unit "$LANG_DETECTED")"
+
+          missing=0
+          for pair in "format:$format_cmd" "lint:$lint_cmd" "unit:$unit_cmd"; do
+            key="${pair%%:*}"
+            val="${pair#*:}"
+            if [ -z "$val" ]; then
+              echo "Missing strictness-triad command: $key"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -eq 1 ] && [ "$STRICTNESS" = "strict" ]; then
+            echo "ERROR: strict mode requires format/lint/unit commands to resolve"
+            exit 1
+          fi
+
+          if [ "$missing" -eq 1 ]; then
+            echo "WARNING: non-strict mode continuing with unresolved triad entries"
+          fi
+
+          echo "strictness=$STRICTNESS" >> "$GITHUB_OUTPUT"
+          echo "format=$format_cmd" >> "$GITHUB_OUTPUT"
+          echo "lint=$lint_cmd" >> "$GITHUB_OUTPUT"
+          echo "unit=$unit_cmd" >> "$GITHUB_OUTPUT"
+
+  format:
+    name: format
+    needs: resolve-triad
+    if: needs.resolve-triad.outputs.format != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run format gate
+        shell: bash
+        run: ${{ needs.resolve-triad.outputs.format }}
+
+  lint:
+    name: lint
+    needs: resolve-triad
+    if: needs.resolve-triad.outputs.lint != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run lint gate
+        shell: bash
+        run: ${{ needs.resolve-triad.outputs.lint }}
+
+  unit:
+    name: unit
+    needs: resolve-triad
+    if: needs.resolve-triad.outputs.unit != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run unit gate
+        shell: bash
+        run: ${{ needs.resolve-triad.outputs.unit }}
