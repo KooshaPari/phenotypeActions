@@ -165,3 +165,7 @@ git push origin v0 --force               # Update remote tag
 
 Use floating major tags (`v0`, `v1`) so consumers auto-receive patches.
 Use exact tags (`v0.1.0`) for audit trails.
+
+## Session documentation
+
+Use `docs/index.md` and `docs/sessions/<YYYYMMDD-descriptive-name>/` for extended agent session artifacts; promote durable, repo-wide guidance into this file or `README.md` when stabilized.
