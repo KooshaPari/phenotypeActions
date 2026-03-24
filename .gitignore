@@ -2,3 +2,7 @@
 
 # Symlinked local worktrees (must not be recorded as gitlinks)
 PROJECT-wtrees/
+
+# Local generated PR inventory dumps
+open_prs.json
+open_prs_full.json
