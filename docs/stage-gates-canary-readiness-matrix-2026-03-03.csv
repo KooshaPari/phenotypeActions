@@ -1,0 +1,3 @@
+repo,run_outcome,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint
+civ,repo_unreachable,false,false,false,false,false,false,verify KooshaPari/civ visibility and token read scope
+trash-cli,strictness_drift,false,true,true,true,false,false,apply stage-gates contract template and strictness policy wiring

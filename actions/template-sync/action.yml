@@ -9,10 +9,26 @@ inputs:
     description: Source template repository (default: template-commons)
     required: false
     default: "template-commons"
+  stage_gates_repo:
+    description: Repository containing stage-gates contract templates
+    required: false
+    default: "phenotype-config"
+  stage_gates_template_path:
+    description: Path to canonical stage-gates template inside stage_gates_repo
+    required: false
+    default: "templates/stage-gates/v1/stage-gates.yml"
+  dependency_fallbacks_file:
+    description: Path to owner-scoped dependency fallback mapping CSV inside stage_gates_repo
+    required: false
+    default: "templates/template-sync/dependency-fallbacks.csv"
   target_repos:
     description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
+  repo_owner:
+    description: GitHub owner/org containing target repositories
+    required: false
+    default: "KooshaPari"
   dry_run:
     description: If true, report drift but do not create PRs
     required: false
@@ -62,13 +78,22 @@ runs:
       shell: bash
       env:
         TEMPLATE_REPO: ${{ inputs.template_repo }}
+        STAGE_GATES_REPO: ${{ inputs.stage_gates_repo }}
+        STAGE_GATES_TEMPLATE_PATH: ${{ inputs.stage_gates_template_path }}
+        DEPENDENCY_FALLBACKS_FILE: ${{ inputs.dependency_fallbacks_file }}
         TARGET_REPOS: ${{ inputs.target_repos }}
+        REPO_OWNER: ${{ inputs.repo_owner }}
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
+<<<<<<< HEAD
         REPO_OWNER: ${{ inputs.repo_owner }}
         FALLBACK_OWNER: ${{ inputs.fallback_owner }}
         BASE_BRANCH: ${{ inputs.base_branch }}
         WORKSPACE_ROOT: ${{ github.workspace }}
+=======
+        BASE_BRANCH: ${{ inputs.base_branch }}
+        PHENOTYPE_ROOT: ${{ github.workspace }}
+>>>>>>> main
       run: |
         set -euo pipefail
 
@@ -84,6 +109,7 @@ runs:
         log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
         log_error() { echo -e "${RED}✗${NC} $*"; }
 
+<<<<<<< HEAD
         normalize_repo_slug() {
           local value="$1"
           value="$(echo "$value" | xargs)"
@@ -141,6 +167,100 @@ runs:
 
         log_info "Template Sync"
         log_info "Template repo: ${TEMPLATE_REPO}"
+=======
+        resolve_fallback_mapping() {
+          local owner="$1"
+          local dependency_key="$2"
+          local fallback_file_path="$3"
+          local fallback_slug=""
+          local fallback_workspace_dir=""
+          local remediation_hint=""
+
+          if [[ ! -f "${fallback_file_path}" ]]; then
+            return 0
+          fi
+
+          while IFS=',' read -r row_owner row_dependency_key row_fallback_slug row_fallback_workspace_dir row_remediation_hint; do
+            [[ "${row_owner}" == "owner" ]] && continue
+            [[ "${row_owner}" != "${owner}" ]] && continue
+            [[ "${row_dependency_key}" != "${dependency_key}" ]] && continue
+            fallback_slug="${row_fallback_slug}"
+            fallback_workspace_dir="${row_fallback_workspace_dir}"
+            remediation_hint="${row_remediation_hint}"
+            break
+          done < "${fallback_file_path}"
+
+          echo "${fallback_slug}|${fallback_workspace_dir}|${remediation_hint}"
+        }
+
+        resolve_dependency_repo() {
+          local label="$1"
+          local dependency_key="$2"
+          local requested="$3"
+          local fallback_path="$4"
+          local fallback_hint="${5:-}"
+          local requested_path="${PHENOTYPE_ROOT}/${requested}"
+          local resolved_path=""
+
+          if [[ -d "${requested_path}" ]]; then
+            resolved_path="${requested_path}"
+          elif [[ "${requested}" == */* ]]; then
+            local cloned_dir="${requested##*/}"
+            local clone_path="${PHENOTYPE_ROOT}/${cloned_dir}"
+            log_info "${label}: cloning ${requested} into ${clone_path}"
+            if gh repo clone "${requested}" "${clone_path}" -- --depth 1 >/dev/null 2>&1; then
+              resolved_path="${clone_path}"
+            fi
+          fi
+
+          if [[ -z "${resolved_path}" && -d "${fallback_path}" ]]; then
+            resolved_path="${fallback_path}"
+            log_warning "${label}: using fallback path ${fallback_path}"
+          fi
+
+          if [[ -z "${resolved_path}" ]]; then
+            log_error "${label}: dependency repo unavailable (${requested})"
+            if [[ -n "${fallback_hint}" ]]; then
+              log_warning "${label}: remediation_hint=${fallback_hint}"
+            fi
+            return 1
+          fi
+
+          echo "${resolved_path}"
+        }
+
+        FALLBACK_FILE="${PHENOTYPE_ROOT}/phenotype-config/${DEPENDENCY_FALLBACKS_FILE}"
+
+        template_map="$(resolve_fallback_mapping "${REPO_OWNER}" "template_repo" "${FALLBACK_FILE}")"
+        IFS='|' read -r template_fallback_slug template_fallback_workspace template_hint <<< "${template_map}"
+        stage_map="$(resolve_fallback_mapping "${REPO_OWNER}" "stage_gates_repo" "${FALLBACK_FILE}")"
+        IFS='|' read -r stage_fallback_slug stage_fallback_workspace stage_hint <<< "${stage_map}"
+
+        template_requested="${TEMPLATE_REPO}"
+        stage_requested="${STAGE_GATES_REPO}"
+        if [[ "${template_requested}" != */* && -n "${template_fallback_slug}" ]]; then
+          template_requested="${template_fallback_slug}"
+        fi
+        if [[ "${stage_requested}" != */* && -n "${stage_fallback_slug}" ]]; then
+          stage_requested="${stage_fallback_slug}"
+        fi
+
+        template_fallback_path="${PHENOTYPE_ROOT}/phenotypeActions"
+        if [[ -n "${template_fallback_workspace}" ]]; then
+          template_fallback_path="${PHENOTYPE_ROOT}/${template_fallback_workspace}"
+        fi
+        stage_fallback_path="${PHENOTYPE_ROOT}/phenotype-config"
+        if [[ -n "${stage_fallback_workspace}" ]]; then
+          stage_fallback_path="${PHENOTYPE_ROOT}/${stage_fallback_workspace}"
+        fi
+
+        TEMPLATE_REPO_PATH="$(resolve_dependency_repo "Template repo" "template_repo" "${template_requested}" "${template_fallback_path}" "${template_hint}")"
+        STAGE_GATES_REPO_PATH="$(resolve_dependency_repo "Stage-gates repo" "stage_gates_repo" "${stage_requested}" "${stage_fallback_path}" "${stage_hint}")"
+
+        log_info "Template Sync"
+        log_info "Template repo: ${TEMPLATE_REPO_PATH}"
+        log_info "Stage-gates repo: ${STAGE_GATES_REPO_PATH}"
+>>>>>>> main
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
         echo ""
@@ -149,22 +269,134 @@ runs:
         IFS=',' read -ra repos <<< "$TARGET_REPOS"
 
         TOTAL_REPOS=${#repos[@]}
+        ANALYZED_REPOS=0
+        CANARY_READY_COUNT=0
         SYNCED_REPOS=0
         DRIFT_REPOS=()
+        RUN_ID="${GITHUB_RUN_ID:-local}"
+        RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
+        RUN_STAMP="${RUN_ID}-${RUN_ATTEMPT}"
+        MATRIX_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-readiness-matrix-${RUN_STAMP}.csv"
+        SUMMARY_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-remediation-${RUN_STAMP}.md"
+        DECISION_CSV_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-decision-${RUN_STAMP}.csv"
+        DECISION_JSON_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-decision-${RUN_STAMP}.json"
+        NEXT_ROLLOUT_CSV_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-next-repo-rollout-${RUN_STAMP}.csv"
+        NEXT_ROLLOUT_JSON_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-next-repo-rollout-${RUN_STAMP}.json"
+        NEXT_ROLLOUT_TSV="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-next-repo-rollout-${RUN_STAMP}.tsv"
+        mkdir -p "$(dirname "${MATRIX_FILE}")"
+        echo "repo,run_outcome,remediation_category,owner_hint,token_hint,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready,remediation_hint,next_command" > "${MATRIX_FILE}"
+        {
+          echo "# Stage-Gates Canary Remediation Summary (${RUN_STAMP})"
+          echo ""
+          echo "| repo | run_outcome | remediation_hint | next_command |"
+          echo "| --- | --- | --- | --- |"
+        } > "${SUMMARY_FILE}"
+        SUMMARY_TABLE_FILE="${PHENOTYPE_ROOT}/phenotypeActions/docs/stage-gates-canary-summary-table-${RUN_STAMP}.md"
+        {
+          echo "# Stage-Gates Canary Summary Table (${RUN_STAMP})"
+          echo ""
+          echo "| repo | run_outcome | remediation_category | owner_hint | token_hint | stage_gates_ready | canary_ready | next_command |"
+          echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+        } > "${SUMMARY_TABLE_FILE}"
+        echo -n > "${NEXT_ROLLOUT_TSV}"
+
+        next_command_for_category() {
+          local category="$1"
+          local repo_name="$2"
+          case "${category}" in
+            access_repo_unreachable)
+              echo "gh repo view ${REPO_OWNER}/${repo_name} || gh auth refresh -h github.com -s repo"
+              ;;
+            template_governance_sync_required)
+              echo "cp ${TEMPLATE_REPO_PATH}/templates/AGENTS.md ${repo_name}/AGENTS.md && cp ${TEMPLATE_REPO_PATH}/templates/CLAUDE.md ${repo_name}/CLAUDE.md"
+              ;;
+            workflow_composite_wiring_required)
+              echo "rg -n \"phenotypeActions/actions/(policy-gate|lint-test)\" ${repo_name}/.github/workflows || echo \"wire composite action refs\""
+              ;;
+            stage_gates_contract_sync_required)
+              echo "cp ${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH} ${repo_name}/.github/workflows/stage-gates.yml"
+              ;;
+            strictness_signal_alignment_required)
+              echo "rg -n \"severity:[[:space:]]*info|comment_severity_threshold:[[:space:]]*LOW|STAGE_GATES_STRICT\" ${repo_name}/.coderabbit.yaml ${repo_name}/.gemini/config.yaml ${repo_name}/.github/workflows/stage-gates.yml"
+              ;;
+            manual_review_required)
+              echo "gh run view ${RUN_ID} --repo ${REPO_OWNER}/phenotypeActions --log"
+              ;;
+            none)
+              echo "echo \"no remediation required\""
+              ;;
+            *)
+              echo "echo \"review canary logs and drift fields\""
+              ;;
+          esac
+        }
+
+        emit_next_rollout_candidate() {
+          local repo_name="$1"
+          local outcome="$2"
+          local category="$3"
+          local governance="$4"
+          local workflow="$5"
+          local stage_gates="$6"
+          local strictness="$7"
+          local stage_ready="$8"
+          local canary_ready="$9"
+          local command="${10}"
+          local score=100
+          local recommended_action="advance"
+
+          [[ "${outcome}" == "repo_unreachable" ]] && score=0
+          [[ "${governance}" == "true" ]] && score=$((score - 10))
+          [[ "${workflow}" == "true" ]] && score=$((score - 15))
+          [[ "${stage_gates}" == "true" ]] && score=$((score - 40))
+          [[ "${strictness}" == "true" ]] && score=$((score - 35))
+          (( score < 0 )) && score=0
+
+          if [[ "${canary_ready}" != "true" ]]; then
+            recommended_action="fix_then_retry"
+          elif [[ "${stage_ready}" != "true" ]]; then
+            recommended_action="sync_stage_gates_then_retry"
+          fi
+
+          printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+            "${score}" "${repo_name}" "${recommended_action}" "${outcome}" "${category}" "${command}" >> "${NEXT_ROLLOUT_TSV}"
+        }
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)
           repo_slug="$(normalize_repo_slug "$repo_name")"
 
+<<<<<<< HEAD
           if ! visibility="$(gh repo view "$repo_slug" --json visibility -q '.visibility' 2>/dev/null)"; then
             log_warning "${repo_name}: inaccessible with provided token (${repo_slug}), skipping"
             continue
+=======
+          if [[ ! -d "$repo_path" ]]; then
+            log_info "Cloning ${REPO_OWNER}/${repo_name}..."
+            if ! gh repo clone "${REPO_OWNER}/${repo_name}" "$repo_path" -- --depth 1 >/dev/null 2>&1; then
+              log_warning "Repo not found/unreachable (skipping): ${repo_name}"
+              remediation_category="access_repo_unreachable"
+              owner_hint="verify owner=${REPO_OWNER}"
+              token_hint="ensure token has contents:read and repo visibility for ${REPO_OWNER}/${repo_name}"
+              remediation_hint="repo_unreachable: verify ${REPO_OWNER}/${repo_name} exists and token has repo read access"
+              next_command="$(next_command_for_category "${remediation_category}" "${repo_name}")"
+              echo "${repo_name},repo_unreachable,${remediation_category},${owner_hint},${token_hint},false,false,false,false,false,false,${remediation_hint},${next_command}" >> "${MATRIX_FILE}"
+              echo "| ${repo_name} | repo_unreachable | ${remediation_hint} | \`${next_command}\` |" >> "${SUMMARY_FILE}"
+              echo "| ${repo_name} | repo_unreachable | ${remediation_category} | ${owner_hint} | ${token_hint} | false | false | \`${next_command}\` |" >> "${SUMMARY_TABLE_FILE}"
+              emit_next_rollout_candidate "${repo_name}" "repo_unreachable" "${remediation_category}" "false" "false" "false" "false" "false" "false" "${next_command}"
+              continue
+            fi
+>>>>>>> main
           fi
 
           log_info "Checking ${repo_name} (${repo_slug}, visibility=${visibility})..."
 
           # Track if drift detected
           drift_detected=false
+          governance_drift=false
+          workflow_drift=false
+          stage_gates_drift=false
+          strictness_drift=false
 
           repo_temp_dir="$(mktemp -d)"
           repo_path="${repo_temp_dir}/${repo_name}"
@@ -177,7 +409,11 @@ runs:
 
           # Check for governance file drift
           for file in "AGENTS.md" "CLAUDE.md"; do
+<<<<<<< HEAD
             template_file="${WORKSPACE_ROOT}/${TEMPLATE_REPO}/templates/${file}"
+=======
+            template_file="${TEMPLATE_REPO_PATH}/templates/${file}"
+>>>>>>> main
             target_file="${repo_path}/${file}"
 
             if [[ ! -f "$template_file" ]]; then
@@ -188,11 +424,13 @@ runs:
             if [[ ! -f "$target_file" ]]; then
               log_warning "${repo_name}: ${file} missing"
               drift_detected=true
+              governance_drift=true
             else
               # Compare files (excluding repo-specific customizations if any)
               if ! diff -q "$template_file" "$target_file" > /dev/null 2>&1; then
                 log_warning "${repo_name}: ${file} diverges from template"
                 drift_detected=true
+                governance_drift=true
               fi
             fi
           done
@@ -207,13 +445,97 @@ runs:
                 if ! grep -q "phenotypeActions/actions/${workflow}" "$workflow_file" 2>/dev/null; then
                   log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
                   drift_detected=true
+                  workflow_drift=true
                 fi
               else
                 log_warning "${repo_name}: ${workflow} workflow not found"
                 drift_detected=true
+                workflow_drift=true
               fi
             done
           fi
+
+          # Check for stage-gates workflow drift against canonical contract template
+          stage_gates_template="${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH}"
+          stage_gates_target="${repo_path}/.github/workflows/stage-gates.yml"
+          if [[ ! -f "${stage_gates_template}" ]]; then
+            log_warning "Canonical stage-gates template not found: ${STAGE_GATES_TEMPLATE_PATH}"
+            drift_detected=true
+            stage_gates_drift=true
+          elif [[ ! -f "${stage_gates_target}" ]]; then
+            log_warning "${repo_name}: stage-gates workflow missing"
+            drift_detected=true
+            stage_gates_drift=true
+          elif ! diff -q "${stage_gates_template}" "${stage_gates_target}" > /dev/null 2>&1; then
+            log_warning "${repo_name}: stage-gates workflow diverges from contract v1"
+            drift_detected=true
+            stage_gates_drift=true
+          fi
+
+          # Check strictness signal drift for CodeRabbit/Gemini and stage-gates strict variable
+          coderabbit_file="${repo_path}/.coderabbit.yaml"
+          if [[ ! -f "${coderabbit_file}" ]] || ! grep -Eq "severity:[[:space:]]*info" "${coderabbit_file}"; then
+            log_warning "${repo_name}: CodeRabbit strictness signal missing/invalid (expected severity: info)"
+            drift_detected=true
+            strictness_drift=true
+          fi
+          gemini_file="${repo_path}/.gemini/config.yaml"
+          if [[ -f "${gemini_file}" ]] && ! grep -Eq "comment_severity_threshold:[[:space:]]*LOW" "${gemini_file}"; then
+            log_warning "${repo_name}: Gemini strictness signal invalid (expected LOW)"
+            drift_detected=true
+            strictness_drift=true
+          fi
+          if [[ -f "${stage_gates_target}" ]] && ! grep -q "STAGE_GATES_STRICT" "${stage_gates_target}"; then
+            log_warning "${repo_name}: stage-gates strictness signal wiring missing"
+            drift_detected=true
+            strictness_drift=true
+          fi
+
+          run_outcome="in_sync"
+          remediation_category="none"
+          owner_hint="owner=${REPO_OWNER}"
+          token_hint="token scope valid"
+          remediation_hint="none"
+          if [[ "${governance_drift}" == true ]]; then
+            run_outcome="governance_drift"
+            remediation_category="template_governance_sync_required"
+            remediation_hint="sync AGENTS.md and CLAUDE.md from template source"
+          fi
+          if [[ "${workflow_drift}" == true ]]; then
+            run_outcome="workflow_drift"
+            remediation_category="workflow_composite_wiring_required"
+            remediation_hint="wire policy-gate and lint-test workflows to phenotypeActions composite actions"
+          fi
+          if [[ "${stage_gates_drift}" == true ]]; then
+            run_outcome="stage_gates_drift"
+            remediation_category="stage_gates_contract_sync_required"
+            remediation_hint="replace .github/workflows/stage-gates.yml with contract template ${STAGE_GATES_TEMPLATE_PATH}"
+          fi
+          if [[ "${strictness_drift}" == true ]]; then
+            run_outcome="strictness_drift"
+            remediation_category="strictness_signal_alignment_required"
+            remediation_hint="set CodeRabbit severity=info, Gemini threshold=LOW, and include STAGE_GATES_STRICT wiring"
+          fi
+          next_command="$(next_command_for_category "${remediation_category}" "${repo_name}")"
+
+          stage_gates_ready=true
+          canary_ready=true
+          [[ "${stage_gates_drift}" == true ]] && stage_gates_ready=false
+          [[ "${strictness_drift}" == true ]] && canary_ready=false
+          if [[ "${drift_detected}" == true && "${run_outcome}" == "in_sync" ]]; then
+            run_outcome="manual_review_required"
+            remediation_category="manual_review_required"
+            remediation_hint="review logs for drift source and apply contract templates"
+            next_command="$(next_command_for_category "${remediation_category}" "${repo_name}")"
+          fi
+          echo "${repo_name},${run_outcome},${remediation_category},owner=${REPO_OWNER},token=repo_read_required,${governance_drift},${workflow_drift},${stage_gates_drift},${strictness_drift},${stage_gates_ready},${canary_ready},${remediation_hint},${next_command}" >> "${MATRIX_FILE}"
+          echo "| ${repo_name} | ${run_outcome} | ${remediation_hint} | \`${next_command}\` |" >> "${SUMMARY_FILE}"
+          echo "| ${repo_name} | ${run_outcome} | ${remediation_category} | owner=${REPO_OWNER} | token=repo_read_required | ${stage_gates_ready} | ${canary_ready} | \`${next_command}\` |" >> "${SUMMARY_TABLE_FILE}"
+          ANALYZED_REPOS=$((ANALYZED_REPOS + 1))
+          if [[ "${canary_ready}" == "true" ]]; then
+            CANARY_READY_COUNT=$((CANARY_READY_COUNT + 1))
+          fi
+          emit_next_rollout_candidate "${repo_name}" "${run_outcome}" "${remediation_category}" "${governance_drift}" "${workflow_drift}" "${stage_gates_drift}" "${strictness_drift}" "${stage_gates_ready}" "${canary_ready}" "${next_command}"
 
           if [[ "$drift_detected" == true ]]; then
             DRIFT_REPOS+=("$repo_name")
@@ -232,20 +554,35 @@ runs:
               git checkout -b "$branch_name" "origin/${BASE_BRANCH}" 2>/dev/null || git checkout -b "$branch_name"
 
               # Copy updated files
+<<<<<<< HEAD
               cp "${WORKSPACE_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
               cp "${WORKSPACE_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+=======
+              cp "${TEMPLATE_REPO_PATH}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
+              cp "${TEMPLATE_REPO_PATH}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+              mkdir -p ".github/workflows"
+              cp "${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH}" ".github/workflows/stage-gates.yml" 2>/dev/null || true
+              cp "${STAGE_GATES_REPO_PATH}/templates/.coderabbit.yaml" ".coderabbit.yaml" 2>/dev/null || true
+>>>>>>> main
 
               # Stage changes
-              git add AGENTS.md CLAUDE.md 2>/dev/null || true
+              git add AGENTS.md CLAUDE.md .github/workflows/stage-gates.yml .coderabbit.yaml 2>/dev/null || true
 
               # Commit if there are changes
               if ! git diff --cached --quiet; then
+<<<<<<< HEAD
                 git commit -m "automation: sync governance templates from ${TEMPLATE_REPO}
 
 This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from the
 template-commons repository to maintain consistency across Phenotype repos.
 
 Generated by template-sync automation." 2>/dev/null || true
+=======
+                git commit -m "automation: sync governance templates from ${TEMPLATE_REPO}" \
+                  -m "Synchronize AGENTS.md and CLAUDE.md from shared templates." \
+                  -m "Generated by template-sync automation." \
+                  2>/dev/null || true
+>>>>>>> main
               fi
 
               # Push branch and create PR
@@ -254,6 +591,7 @@ Generated by template-sync automation." 2>/dev/null || true
               # Create PR using gh CLI
               pr_output=$(gh -R "$repo_slug" pr create \
                 --title "automation: sync templates from ${TEMPLATE_REPO}" \
+<<<<<<< HEAD
                 --body "This PR synchronizes governance files from ${TEMPLATE_REPO}.
 
 Governance templates synchronized:
@@ -261,6 +599,9 @@ Governance templates synchronized:
 - CLAUDE.md
 
 Please review and merge if changes are acceptable." \
+=======
+                --body "This PR synchronizes governance files from ${TEMPLATE_REPO}. Includes AGENTS.md and CLAUDE.md updates." \
+>>>>>>> main
                 --base "$BASE_BRANCH" \
                 --head "$branch_name" \
                 2>/dev/null || echo "")
@@ -302,4 +643,98 @@ Please review and merge if changes are acceptable." \
           log_warning "Dry run mode: no PRs created"
         else
           log_success "Synced repos: $SYNCED_REPOS"
+        fi
+        echo "Readiness matrix: ${MATRIX_FILE}"
+        echo "Remediation summary: ${SUMMARY_FILE}"
+        echo "Summary table: ${SUMMARY_TABLE_FILE}"
+        if (( TOTAL_REPOS > 0 )); then
+          coverage_pct=$(( ANALYZED_REPOS * 100 / TOTAL_REPOS ))
+        else
+          coverage_pct=0
+        fi
+        if (( ANALYZED_REPOS > 0 )); then
+          canary_ready_pct=$(( CANARY_READY_COUNT * 100 / ANALYZED_REPOS ))
+        else
+          canary_ready_pct=0
+        fi
+        phase_1_pass=false
+        phase_2_pass=false
+        broad_pass=false
+        if (( coverage_pct == 100 && canary_ready_pct >= 50 )); then
+          phase_1_pass=true
+        fi
+        if (( coverage_pct == 100 && canary_ready_pct >= 80 )); then
+          phase_2_pass=true
+        fi
+        # broad pass requires two consecutive perfect runs; cannot be true from a single run artifact.
+        broad_pass=false
+        recommended_phase="hold"
+        decision_reason="insufficient_thresholds"
+        if [[ "${phase_2_pass}" == "true" ]]; then
+          recommended_phase="phase-2"
+          decision_reason="phase_2_threshold_met"
+        elif [[ "${phase_1_pass}" == "true" ]]; then
+          recommended_phase="phase-1"
+          decision_reason="phase_1_threshold_met"
+        fi
+        if (( coverage_pct == 100 && canary_ready_pct == 100 )); then
+          recommended_phase="prepare_broad_after_second_perfect_run"
+          decision_reason="first_perfect_run_recorded"
+        fi
+        echo "run_stamp,total_repos,analyzed_repos,canary_ready_count,coverage_pct,canary_ready_pct,phase_1_pass,phase_2_pass,broad_pass,recommended_phase,decision_reason" > "${DECISION_CSV_FILE}"
+        echo "${RUN_STAMP},${TOTAL_REPOS},${ANALYZED_REPOS},${CANARY_READY_COUNT},${coverage_pct},${canary_ready_pct},${phase_1_pass},${phase_2_pass},${broad_pass},${recommended_phase},${decision_reason}" >> "${DECISION_CSV_FILE}"
+        cat > "${DECISION_JSON_FILE}" <<EOF
+        {
+          "run_stamp": "${RUN_STAMP}",
+          "total_repos": ${TOTAL_REPOS},
+          "analyzed_repos": ${ANALYZED_REPOS},
+          "canary_ready_count": ${CANARY_READY_COUNT},
+          "coverage_pct": ${coverage_pct},
+          "canary_ready_pct": ${canary_ready_pct},
+          "phase_1_pass": ${phase_1_pass},
+          "phase_2_pass": ${phase_2_pass},
+          "broad_pass": ${broad_pass},
+          "recommended_phase": "${recommended_phase}",
+          "decision_reason": "${decision_reason}"
+        }
+        EOF
+
+        sort -t $'\t' -k1,1nr -k2,2 "${NEXT_ROLLOUT_TSV}" > "${NEXT_ROLLOUT_TSV}.sorted"
+        mv "${NEXT_ROLLOUT_TSV}.sorted" "${NEXT_ROLLOUT_TSV}"
+        echo "rank,repo,priority_score,recommended_action,run_outcome,remediation_category,next_command" > "${NEXT_ROLLOUT_CSV_FILE}"
+        echo "[" > "${NEXT_ROLLOUT_JSON_FILE}"
+        rank=0
+        while IFS=$'\t' read -r score repo_name recommended_action run_outcome remediation_category next_command; do
+          rank=$((rank + 1))
+          echo "${rank},${repo_name},${score},${recommended_action},${run_outcome},${remediation_category},${next_command}" >> "${NEXT_ROLLOUT_CSV_FILE}"
+          sep=","
+          [[ "${rank}" -eq 1 ]] && sep=""
+          cat >> "${NEXT_ROLLOUT_JSON_FILE}" <<EOF
+        ${sep}
+          {
+            "rank": ${rank},
+            "repo": "${repo_name}",
+            "priority_score": ${score},
+            "recommended_action": "${recommended_action}",
+            "run_outcome": "${run_outcome}",
+            "remediation_category": "${remediation_category}",
+            "next_command": "${next_command}"
+          }
+        EOF
+        done < "${NEXT_ROLLOUT_TSV}"
+        echo "]" >> "${NEXT_ROLLOUT_JSON_FILE}"
+        echo "Decision CSV: ${DECISION_CSV_FILE}"
+        echo "Decision JSON: ${DECISION_JSON_FILE}"
+        echo "Next rollout CSV: ${NEXT_ROLLOUT_CSV_FILE}"
+        echo "Next rollout JSON: ${NEXT_ROLLOUT_JSON_FILE}"
+        if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          {
+            echo "## Stage-Gates Canary Summary (${RUN_STAMP})"
+            echo ""
+            cat "${SUMMARY_TABLE_FILE}"
+            echo ""
+            echo "### Rollout Decision"
+            echo ""
+            cat "${DECISION_CSV_FILE}"
+          } >> "${GITHUB_STEP_SUMMARY}"
         fi
