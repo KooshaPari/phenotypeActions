@@ -1,0 +1,2 @@
+repo,governance_drift,workflow_drift,stage_gates_drift,strictness_drift,stage_gates_ready,canary_ready
+trash-cli,false,true,true,true,false,false
