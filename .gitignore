@@ -2,7 +2,17 @@
 
 # Symlinked local worktrees (must not be recorded as gitlinks)
 PROJECT-wtrees/
+.DS_Store
 
-# Generated inventory dumps
+# Symlinked local worktrees (must not be recorded as gitlinks)
+PROJECT-wtrees/
+worktrees/
+
+# Local generated PR inventory dumps
 open_prs.json
 open_prs_full.json
+
+# VitePress
+docs/.vitepress/cache
+docs/.vitepress/dist
+node_modules
