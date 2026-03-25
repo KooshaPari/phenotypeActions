@@ -1,0 +1,3 @@
+rank,repo,priority_score,recommended_action,run_outcome,remediation_category,next_command
+1,trash-cli,10,fix_then_retry,strictness_drift,strictness_signal_alignment_required,rg -n "severity:[[:space:]]*info|comment_severity_threshold:[[:space:]]*LOW|STAGE_GATES_STRICT" trash-cli/.coderabbit.yaml trash-cli/.gemini/config.yaml trash-cli/.github/workflows/stage-gates.yml
+2,civ,0,fix_then_retry,repo_unreachable,access_repo_unreachable,gh repo view KooshaPari/civ || gh auth refresh -h github.com -s repo
