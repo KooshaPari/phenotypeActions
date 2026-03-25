@@ -33,7 +33,7 @@ jobs:
 
           if [[ "$HEAD_REF" == fix/* ]]; then
             if [[ "$BASE_REF" == "main" || "$BASE_REF" == "master" ]]; then
-              if [[ "$PR_LABELS" != *"layered-pr-exception"* ]]; then
+              if ! echo "$PR_LABELS" | jq -e '. | any(. == "layered-pr-exception")' > /dev/null; then
                 echo "ERROR: fix/* PRs must target a layered branch, not main/master."
                 echo "Use stack/*, layer/*, release/*, or add label layered-pr-exception."
                 exit 1
@@ -43,11 +43,15 @@ jobs:
 
           git fetch origin "$BASE_REF" --depth=1 || true
           PR_HEAD="${{ github.event.pull_request.head.sha }}"
-          MERGES=$(git rev-list --merges "origin/$BASE_REF..$PR_HEAD" || true)
+                    MERGES=$(git rev-list --merges "origin/$BASE_REF..$PR_HEAD" || true)
           if [[ -n "$MERGES" ]]; then
-            echo "ERROR: merge commits detected in PR diff range:"
-            echo "$MERGES"
-            exit 1
+            if ! echo "$PR_LABELS" | jq -e '. | any(. == "allow-merges")' > /dev/null; then
+              echo "ERROR: merge commits detected in PR diff range:"
+              echo "$MERGES"
+              echo "Add label allow-merges to bypass if rebase is not allowed."
+              exit 1
+            fi
           fi
+
 
           echo "Policy gate passed."

@@ -1,0 +1,19 @@
+name: workflow-permissions
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  checks: write
+
+jobs:
+  set-permissions:
+    name: Set workflow permissions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
