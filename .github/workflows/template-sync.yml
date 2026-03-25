@@ -120,14 +120,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout phenotypeActions
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: Phenotype/repos/phenotypeActions
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout template-commons
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: Phenotype/repos/template-commons
           path: template-commons

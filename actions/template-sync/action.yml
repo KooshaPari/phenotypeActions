@@ -14,11 +14,11 @@ inputs:
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
   dry_run:
-    description: If true, report drift but do not create PRs
+    description: "If true, report drift but do not create PRs"
     required: false
     default: "false"
   github_token:
-    description: GitHub token for creating PRs
+    description: "GitHub token for creating PRs"
     required: true
   base_branch:
     description: "Base branch to create PRs against (default: main)"
@@ -102,6 +102,9 @@ runs:
           fail "Token cannot list repos. Required scopes/permissions are missing."
         fi
 
+        rm -rf "${WORK_ROOT}"
+        mkdir -p "${WORK_ROOT}"
+
         log_info "Template Sync"
         log_info "Resolved phenotype root: ${phenotype_root}"
         log_info "Template repo: ${TEMPLATE_REPO}"
@@ -109,6 +112,13 @@ runs:
         log_info "Base branch: ${BASE_BRANCH}"
         log_info "Strictness mode: ${STRICTNESS_MODE}"
         echo ""
+
+        # Clone template repo for runtime portability on GitHub-hosted runners
+        log_info "Cloning template repository..."
+        if ! gh repo clone "${OWNER}/${TEMPLATE_REPO}" "${WORK_ROOT}/${TEMPLATE_REPO}" -- -q; then
+          log_error "Failed to clone template repo: ${OWNER}/${TEMPLATE_REPO}"
+          exit 1
+        fi
 
         # Parse target repos
         IFS=',' read -ra repos <<< "$TARGET_REPOS"
@@ -121,8 +131,8 @@ runs:
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
           repo_path="${phenotype_root}/${repo_name}"
 
-          if [[ ! -d "$repo_path" ]]; then
-            log_warning "Repo not found (skipping): ${repo_name}"
+          if ! gh repo clone "${OWNER}/${repo_name}" "${repo_path}" -- -q 2>/dev/null; then
+            log_warning "Repo not found or inaccessible (skipping): ${OWNER}/${repo_name}"
             continue
           fi
 
