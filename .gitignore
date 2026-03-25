@@ -3,3 +3,8 @@
 # Symlinked local worktrees (must not be recorded as gitlinks)
 PROJECT-wtrees/
 worktrees/
+
+# VitePress
+docs/.vitepress/cache
+docs/.vitepress/dist
+node_modules
