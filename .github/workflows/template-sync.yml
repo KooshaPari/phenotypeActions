@@ -38,14 +38,20 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REPO_OWNER: ${{ github.repository_owner }}
+<<<<<<< HEAD
+      FALLBACK_OWNER: Phenotype
+=======
+>>>>>>> main
     steps:
       - name: Checkout phenotypeActions
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ github.repository }}
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
+<<<<<<< HEAD
+=======
       - name: Resolve dependency repositories
         id: resolve-deps
         shell: bash
@@ -85,6 +91,7 @@ jobs:
           path: phenotype-config
           token: ${{ secrets.GITHUB_TOKEN }}
 
+>>>>>>> main
       - name: Set target repos
         id: set-repos
         shell: bash
@@ -110,8 +117,81 @@ jobs:
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve preflight dependency repos
+        id: preflight
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          resolve_repo() {
+            local repo_name="$1"
+            local first="${REPO_OWNER}/${repo_name}"
+            local second="${FALLBACK_OWNER}/${repo_name}"
+            if visibility="$(gh repo view "$first" --json visibility -q '.visibility' 2>/dev/null)"; then
+              echo "$first|$visibility"
+              return 0
+            fi
+            if visibility="$(gh repo view "$second" --json visibility -q '.visibility' 2>/dev/null)"; then
+              echo "$second|$visibility"
+              return 0
+            fi
+            return 1
+          }
+
+          if template="$(resolve_repo template-commons)"; then
+            template_slug="${template%%|*}"
+          else
+            echo "preflight_status=skip_template_access" >> "$GITHUB_OUTPUT"
+            echo "preflight_reason=template-commons inaccessible for ${REPO_OWNER} and ${FALLBACK_OWNER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if config="$(resolve_repo phenotype-config)"; then
+            config_slug="${config%%|*}"
+          else
+            echo "preflight_status=skip_config_access" >> "$GITHUB_OUTPUT"
+            echo "preflight_reason=phenotype-config inaccessible for ${REPO_OWNER} and ${FALLBACK_OWNER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "template_repo_slug=${template_slug}" >> "$GITHUB_OUTPUT"
+          echo "config_repo_slug=${config_slug}" >> "$GITHUB_OUTPUT"
+          echo "preflight_status=ok" >> "$GITHUB_OUTPUT"
+          echo "preflight_reason=template=${template_slug},config=${config_slug}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout template-commons
+        if: steps.preflight.outputs.preflight_status == 'ok'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.preflight.outputs.template_repo_slug }}
+          path: template-commons
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Emit deterministic preflight skip classification
+        if: steps.preflight.outputs.preflight_status != 'ok'
+        shell: bash
+        run: |
+          {
+            echo "repo,classification,reason"
+            echo "civ,${{ steps.preflight.outputs.preflight_status }},${{ steps.preflight.outputs.preflight_reason }}"
+            echo "trash-cli,${{ steps.preflight.outputs.preflight_status }},${{ steps.preflight.outputs.preflight_reason }}"
+          } | tee phenotypeActions/docs/template-sync-preflight-skip-classification.csv
+
+      - name: Upload preflight skip classification
+        if: steps.preflight.outputs.preflight_status != 'ok'
+        uses: actions/upload-artifact@v4
+        with:
+          name: template-sync-preflight-skip-classification
+          path: phenotypeActions/docs/template-sync-preflight-skip-classification.csv
+
       - name: Run template sync action
+<<<<<<< HEAD
+        if: steps.preflight.outputs.preflight_status == 'ok'
+=======
         id: template-sync
+>>>>>>> main
         uses: ./phenotypeActions/actions/template-sync
         with:
           template_repo: ${{ steps.resolve-deps.outputs.template_slug }}
@@ -122,6 +202,8 @@ jobs:
           repo_owner: ${{ env.REPO_OWNER }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_owner: ${{ env.REPO_OWNER }}
+          fallback_owner: ${{ env.FALLBACK_OWNER }}
           base_branch: "main"
 
       - name: Upload canary artifacts

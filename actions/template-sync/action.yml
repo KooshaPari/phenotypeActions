@@ -6,7 +6,7 @@ description: |
 
 inputs:
   template_repo:
-    description: "Source template repository (default: template-commons)"
+    description: Source template repository (default: template-commons)
     required: false
     default: "template-commons"
   stage_gates_repo:
@@ -22,7 +22,7 @@ inputs:
     required: false
     default: "templates/template-sync/dependency-fallbacks.csv"
   target_repos:
-    description: "Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)"
+    description: Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)
     required: false
     default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
   repo_owner:
@@ -30,20 +30,24 @@ inputs:
     required: false
     default: "KooshaPari"
   dry_run:
-    description: "If true, report drift but do not create PRs"
+    description: If true, report drift but do not create PRs
     required: false
     default: "false"
   github_token:
-    description: "GitHub token for creating PRs"
+    description: GitHub token for creating PRs
     required: true
+  repo_owner:
+    description: GitHub owner/org for target repos (default: current repository owner)
+    required: false
+    default: "Phenotype"
   base_branch:
-    description: "Base branch to create PRs against (default: main)"
+    description: Base branch to create PRs against (default: main)
     required: false
     default: "main"
-  repo_owner:
-    description: "GitHub organization or user owner for template and target repos (defaults to github.repository_owner)"
+  fallback_owner:
+    description: Fallback owner/org for dependency and target repo access checks
     required: false
-    default: ""
+    default: "Phenotype"
 
 runs:
   using: composite
@@ -81,8 +85,15 @@ runs:
         REPO_OWNER: ${{ inputs.repo_owner }}
         DRY_RUN: ${{ inputs.dry_run }}
         GH_TOKEN: ${{ inputs.github_token }}
+<<<<<<< HEAD
+        REPO_OWNER: ${{ inputs.repo_owner }}
+        FALLBACK_OWNER: ${{ inputs.fallback_owner }}
+        BASE_BRANCH: ${{ inputs.base_branch }}
+        WORKSPACE_ROOT: ${{ github.workspace }}
+=======
         BASE_BRANCH: ${{ inputs.base_branch }}
         PHENOTYPE_ROOT: ${{ github.workspace }}
+>>>>>>> main
       run: |
         set -euo pipefail
 
@@ -98,6 +109,65 @@ runs:
         log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
         log_error() { echo -e "${RED}✗${NC} $*"; }
 
+<<<<<<< HEAD
+        normalize_repo_slug() {
+          local value="$1"
+          value="$(echo "$value" | xargs)"
+          if [[ "$value" == *"/"* ]]; then
+            echo "$value"
+          else
+            echo "${REPO_OWNER}/$value"
+          fi
+        }
+
+        resolve_repo_access() {
+          local repo_name_or_slug="$1"
+          local label="$2"
+          local visibility
+          local primary_slug
+          local fallback_slug
+
+          if [[ "$repo_name_or_slug" == *"/"* ]]; then
+            primary_slug="$repo_name_or_slug"
+            fallback_slug="$repo_name_or_slug"
+          else
+            primary_slug="${REPO_OWNER}/${repo_name_or_slug}"
+            fallback_slug="${FALLBACK_OWNER}/${repo_name_or_slug}"
+          fi
+
+          if visibility="$(gh repo view "$primary_slug" --json visibility -q '.visibility' 2>/dev/null)"; then
+            log_success "${label} accessible (${primary_slug}, visibility=${visibility})"
+            echo "$primary_slug"
+            return 0
+          fi
+
+          if [[ "$fallback_slug" != "$primary_slug" ]] && visibility="$(gh repo view "$fallback_slug" --json visibility -q '.visibility' 2>/dev/null)"; then
+            log_warning "${label} not reachable in primary namespace (${primary_slug}); using fallback (${fallback_slug}, visibility=${visibility})"
+            echo "$fallback_slug"
+            return 0
+          fi
+
+          log_error "Cannot access ${label} in primary (${primary_slug}) or fallback (${fallback_slug}) with provided token"
+          return 1
+        }
+
+        # Verify checked out template repo exists and can be read
+        if [[ ! -d "${WORKSPACE_ROOT}/${TEMPLATE_REPO}" ]]; then
+          log_error "Template repo not found in workspace: ${WORKSPACE_ROOT}/${TEMPLATE_REPO}"
+          exit 1
+        fi
+
+        # Explicit preflight checks requested for rollout safety
+        if ! template_repo_slug="$(resolve_repo_access "${TEMPLATE_REPO}" "template source repo")"; then
+          exit 1
+        fi
+        if ! phenotype_config_slug="$(resolve_repo_access "phenotype-config" "phenotype-config")"; then
+          exit 1
+        fi
+
+        log_info "Template Sync"
+        log_info "Template repo: ${TEMPLATE_REPO}"
+=======
         resolve_fallback_mapping() {
           local owner="$1"
           local dependency_key="$2"
@@ -190,16 +260,10 @@ runs:
         log_info "Template Sync"
         log_info "Template repo: ${TEMPLATE_REPO_PATH}"
         log_info "Stage-gates repo: ${STAGE_GATES_REPO_PATH}"
+>>>>>>> main
         log_info "Dry run: ${DRY_RUN}"
         log_info "Base branch: ${BASE_BRANCH}"
         echo ""
-
-        # Clone template repo for runtime portability on GitHub-hosted runners
-        log_info "Cloning template repository..."
-        if ! gh repo clone "${OWNER}/${TEMPLATE_REPO}" "${WORK_ROOT}/${TEMPLATE_REPO}" -- -q; then
-          log_error "Failed to clone template repo: ${OWNER}/${TEMPLATE_REPO}"
-          exit 1
-        fi
 
         # Parse target repos
         IFS=',' read -ra repos <<< "$TARGET_REPOS"
@@ -299,9 +363,14 @@ runs:
         }
 
         for repo_name in "${repos[@]}"; do
-          repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
-          repo_path="${WORK_ROOT}/${repo_name}"
+          repo_name=$(echo "$repo_name" | xargs)
+          repo_slug="$(normalize_repo_slug "$repo_name")"
 
+<<<<<<< HEAD
+          if ! visibility="$(gh repo view "$repo_slug" --json visibility -q '.visibility' 2>/dev/null)"; then
+            log_warning "${repo_name}: inaccessible with provided token (${repo_slug}), skipping"
+            continue
+=======
           if [[ ! -d "$repo_path" ]]; then
             log_info "Cloning ${REPO_OWNER}/${repo_name}..."
             if ! gh repo clone "${REPO_OWNER}/${repo_name}" "$repo_path" -- --depth 1 >/dev/null 2>&1; then
@@ -317,9 +386,10 @@ runs:
               emit_next_rollout_candidate "${repo_name}" "repo_unreachable" "${remediation_category}" "false" "false" "false" "false" "false" "false" "${next_command}"
               continue
             fi
+>>>>>>> main
           fi
 
-          log_info "Checking ${repo_name}..."
+          log_info "Checking ${repo_name} (${repo_slug}, visibility=${visibility})..."
 
           # Track if drift detected
           drift_detected=false
@@ -328,9 +398,22 @@ runs:
           stage_gates_drift=false
           strictness_drift=false
 
+          repo_temp_dir="$(mktemp -d)"
+          repo_path="${repo_temp_dir}/${repo_name}"
+
+          if ! gh repo clone "$repo_slug" "$repo_path" -- --depth=1 >/dev/null 2>&1; then
+            log_warning "${repo_name}: failed to clone ${repo_slug}, skipping"
+            rm -rf "$repo_temp_dir"
+            continue
+          fi
+
           # Check for governance file drift
           for file in "AGENTS.md" "CLAUDE.md"; do
+<<<<<<< HEAD
+            template_file="${WORKSPACE_ROOT}/${TEMPLATE_REPO}/templates/${file}"
+=======
             template_file="${TEMPLATE_REPO_PATH}/templates/${file}"
+>>>>>>> main
             target_file="${repo_path}/${file}"
 
             if [[ ! -f "$template_file" ]]; then
@@ -359,7 +442,7 @@ runs:
               workflow_file=$(find "$workflows_dir" -name "*${workflow}*.yml" -o -name "*${workflow}*.yaml" 2>/dev/null | head -1)
 
               if [[ -n "$workflow_file" ]]; then
-                if ! grep -Eq "phenotypeActions/(\\.github/actions|actions)/${workflow}|reusable-${workflow}\\.yml@" "$workflow_file" 2>/dev/null; then
+                if ! grep -q "phenotypeActions/actions/${workflow}" "$workflow_file" 2>/dev/null; then
                   log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
                   drift_detected=true
                   workflow_drift=true
@@ -471,30 +554,54 @@ runs:
               git checkout -b "$branch_name" "origin/${BASE_BRANCH}" 2>/dev/null || git checkout -b "$branch_name"
 
               # Copy updated files
+<<<<<<< HEAD
+              cp "${WORKSPACE_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
+              cp "${WORKSPACE_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+=======
               cp "${TEMPLATE_REPO_PATH}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
               cp "${TEMPLATE_REPO_PATH}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
               mkdir -p ".github/workflows"
               cp "${STAGE_GATES_REPO_PATH}/${STAGE_GATES_TEMPLATE_PATH}" ".github/workflows/stage-gates.yml" 2>/dev/null || true
               cp "${STAGE_GATES_REPO_PATH}/templates/.coderabbit.yaml" ".coderabbit.yaml" 2>/dev/null || true
+>>>>>>> main
 
               # Stage changes
               git add AGENTS.md CLAUDE.md .github/workflows/stage-gates.yml .coderabbit.yaml 2>/dev/null || true
 
               # Commit if there are changes
               if ! git diff --cached --quiet; then
+<<<<<<< HEAD
+                git commit -m "automation: sync governance templates from ${TEMPLATE_REPO}
+
+This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from the
+template-commons repository to maintain consistency across Phenotype repos.
+
+Generated by template-sync automation." 2>/dev/null || true
+=======
                 git commit -m "automation: sync governance templates from ${TEMPLATE_REPO}" \
                   -m "Synchronize AGENTS.md and CLAUDE.md from shared templates." \
                   -m "Generated by template-sync automation." \
                   2>/dev/null || true
+>>>>>>> main
               fi
 
               # Push branch and create PR
               git push origin "$branch_name" 2>/dev/null || true
 
               # Create PR using gh CLI
-              pr_output=$(gh pr create \
+              pr_output=$(gh -R "$repo_slug" pr create \
                 --title "automation: sync templates from ${TEMPLATE_REPO}" \
+<<<<<<< HEAD
+                --body "This PR synchronizes governance files from ${TEMPLATE_REPO}.
+
+Governance templates synchronized:
+- AGENTS.md
+- CLAUDE.md
+
+Please review and merge if changes are acceptable." \
+=======
                 --body "This PR synchronizes governance files from ${TEMPLATE_REPO}. Includes AGENTS.md and CLAUDE.md updates." \
+>>>>>>> main
                 --base "$BASE_BRANCH" \
                 --head "$branch_name" \
                 2>/dev/null || echo "")
@@ -513,6 +620,8 @@ runs:
           else
             log_success "${repo_name}: In sync"
           fi
+
+          rm -rf "$repo_temp_dir"
         done
 
         # Summary
