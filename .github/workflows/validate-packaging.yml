@@ -24,7 +24,8 @@ jobs:
       - name: Install actionlint
         run: |
           set -euo pipefail
-          latest="$(curl -fsSL https://api.github.com/repos/rhysd/actionlint/releases/latest | jq -r '.tag_name')"
+          # Use GITHUB_TOKEN to avoid rate limits
+          latest="$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/rhysd/actionlint/releases/latest | jq -r '.tag_name')"
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/${latest}/actionlint_${latest#v}_linux_amd64.tar.gz" \
             | tar -xz actionlint
           sudo mv actionlint /usr/local/bin/actionlint
