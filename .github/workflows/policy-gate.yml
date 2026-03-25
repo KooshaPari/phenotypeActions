@@ -43,7 +43,7 @@ jobs:
 
           git fetch origin "$BASE_REF" --depth=1 || true
           PR_HEAD="${{ github.event.pull_request.head.sha }}"
-          MERGES=$(git rev-list --merges "origin/$BASE_REF..$PR_HEAD" || true)
+                    MERGES=$(git rev-list --merges "origin/$BASE_REF..$PR_HEAD" || true)
           if [[ -n "$MERGES" ]]; then
             if [[ "$PR_LABELS" != *"allow-merges"* ]]; then
               echo "ERROR: merge commits detected in PR diff range:"
@@ -52,5 +52,6 @@ jobs:
               exit 1
             fi
           fi
+
 
           echo "Policy gate passed."
