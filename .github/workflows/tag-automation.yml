@@ -1,0 +1,15 @@
+name: Tag Automation
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_call:
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: echo "Creating release for $REF_NAME"
