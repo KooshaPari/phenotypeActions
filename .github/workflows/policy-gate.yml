@@ -1,10 +1,8 @@
 name: Policy Gate
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
-
-permissions:
+on:
+  workflow_dispatch:
   contents: read
   pull-requests: read
 
