@@ -1,0 +1,13 @@
+{
+  "run_stamp": "22633353020-1",
+  "total_repos": 2,
+  "analyzed_repos": 1,
+  "canary_ready_count": 0,
+  "coverage_pct": 50,
+  "canary_ready_pct": 0,
+  "phase_1_pass": false,
+  "phase_2_pass": false,
+  "broad_pass": false,
+  "recommended_phase": "hold",
+  "decision_reason": "insufficient_thresholds"
+}
