@@ -11,6 +11,14 @@ on:
         description: "Comma-separated list of repos to sync (leave empty for all)"
         required: false
         default: ""
+      template_repo:
+        description: "Template source repo (name or owner/name)"
+        required: false
+        default: "template-commons"
+      stage_gates_repo:
+        description: "Stage-gates contract repo (name or owner/name)"
+        required: false
+        default: "phenotype-config"
       dry_run:
         description: "Dry run mode - report drift but don't create PRs"
         required: false
@@ -28,21 +36,62 @@ jobs:
   template-sync:
     name: Sync Governance Templates
     runs-on: ubuntu-latest
+    env:
+      REPO_OWNER: ${{ github.repository_owner }}
+<<<<<<< HEAD
+      FALLBACK_OWNER: Phenotype
+=======
+>>>>>>> main
     steps:
       - name: Checkout phenotypeActions
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
-          repository: Phenotype/repos/phenotypeActions
+          repository: ${{ github.repository }}
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout template-commons
+<<<<<<< HEAD
+=======
+      - name: Resolve dependency repositories
+        id: resolve-deps
+        shell: bash
+        env:
+          USER_TEMPLATE_REPO: ${{ github.event.inputs.template_repo }}
+          USER_STAGE_GATES_REPO: ${{ github.event.inputs.stage_gates_repo }}
+          DEFAULT_TEMPLATE_REPO: template-commons
+          DEFAULT_STAGE_GATES_REPO: phenotype-config
+        run: |
+          set -euo pipefail
+          resolve_slug() {
+            local repo="$1"
+            if [[ "$repo" == */* ]]; then
+              echo "$repo"
+            else
+              echo "${REPO_OWNER}/${repo}"
+            fi
+          }
+          template_repo="${USER_TEMPLATE_REPO:-$DEFAULT_TEMPLATE_REPO}"
+          stage_gates_repo="${USER_STAGE_GATES_REPO:-$DEFAULT_STAGE_GATES_REPO}"
+          echo "template_slug=$(resolve_slug "$template_repo")" >> "$GITHUB_OUTPUT"
+          echo "stage_gates_slug=$(resolve_slug "$stage_gates_repo")" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout template source
+        continue-on-error: true
         uses: actions/checkout@v6
         with:
-          repository: Phenotype/repos/template-commons
+          repository: ${{ steps.resolve-deps.outputs.template_slug }}
           path: template-commons
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout stage-gates source
+        continue-on-error: true
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.resolve-deps.outputs.stage_gates_slug }}
+          path: phenotype-config
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+>>>>>>> main
       - name: Set target repos
         id: set-repos
         shell: bash
@@ -68,14 +117,109 @@ jobs:
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve preflight dependency repos
+        id: preflight
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          resolve_repo() {
+            local repo_name="$1"
+            local first="${REPO_OWNER}/${repo_name}"
+            local second="${FALLBACK_OWNER}/${repo_name}"
+            if visibility="$(gh repo view "$first" --json visibility -q '.visibility' 2>/dev/null)"; then
+              echo "$first|$visibility"
+              return 0
+            fi
+            if visibility="$(gh repo view "$second" --json visibility -q '.visibility' 2>/dev/null)"; then
+              echo "$second|$visibility"
+              return 0
+            fi
+            return 1
+          }
+
+          if template="$(resolve_repo template-commons)"; then
+            template_slug="${template%%|*}"
+          else
+            echo "preflight_status=skip_template_access" >> "$GITHUB_OUTPUT"
+            echo "preflight_reason=template-commons inaccessible for ${REPO_OWNER} and ${FALLBACK_OWNER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if config="$(resolve_repo phenotype-config)"; then
+            config_slug="${config%%|*}"
+          else
+            echo "preflight_status=skip_config_access" >> "$GITHUB_OUTPUT"
+            echo "preflight_reason=phenotype-config inaccessible for ${REPO_OWNER} and ${FALLBACK_OWNER}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "template_repo_slug=${template_slug}" >> "$GITHUB_OUTPUT"
+          echo "config_repo_slug=${config_slug}" >> "$GITHUB_OUTPUT"
+          echo "preflight_status=ok" >> "$GITHUB_OUTPUT"
+          echo "preflight_reason=template=${template_slug},config=${config_slug}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout template-commons
+        if: steps.preflight.outputs.preflight_status == 'ok'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.preflight.outputs.template_repo_slug }}
+          path: template-commons
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Emit deterministic preflight skip classification
+        if: steps.preflight.outputs.preflight_status != 'ok'
+        shell: bash
+        run: |
+          {
+            echo "repo,classification,reason"
+            echo "civ,${{ steps.preflight.outputs.preflight_status }},${{ steps.preflight.outputs.preflight_reason }}"
+            echo "trash-cli,${{ steps.preflight.outputs.preflight_status }},${{ steps.preflight.outputs.preflight_reason }}"
+          } | tee phenotypeActions/docs/template-sync-preflight-skip-classification.csv
+
+      - name: Upload preflight skip classification
+        if: steps.preflight.outputs.preflight_status != 'ok'
+        uses: actions/upload-artifact@v4
+        with:
+          name: template-sync-preflight-skip-classification
+          path: phenotypeActions/docs/template-sync-preflight-skip-classification.csv
+
       - name: Run template sync action
+<<<<<<< HEAD
+        if: steps.preflight.outputs.preflight_status == 'ok'
+=======
+        id: template-sync
+>>>>>>> main
         uses: ./phenotypeActions/actions/template-sync
         with:
-          template_repo: "template-commons"
+          template_repo: ${{ steps.resolve-deps.outputs.template_slug }}
+          stage_gates_repo: ${{ steps.resolve-deps.outputs.stage_gates_slug }}
+          stage_gates_template_path: "templates/stage-gates/v1/stage-gates.yml"
+          dependency_fallbacks_file: "templates/template-sync/dependency-fallbacks.csv"
           target_repos: ${{ steps.set-repos.outputs.repos }}
+          repo_owner: ${{ env.REPO_OWNER }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          repo_owner: ${{ env.REPO_OWNER }}
+          fallback_owner: ${{ env.FALLBACK_OWNER }}
           base_branch: "main"
+
+      - name: Upload canary artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-gates-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            phenotypeActions/docs/stage-gates-canary-readiness-matrix-${{ github.run_id }}-${{ github.run_attempt }}.csv
+            phenotypeActions/docs/stage-gates-canary-remediation-${{ github.run_id }}-${{ github.run_attempt }}.md
+            phenotypeActions/docs/stage-gates-canary-summary-table-${{ github.run_id }}-${{ github.run_attempt }}.md
+            phenotypeActions/docs/stage-gates-canary-decision-${{ github.run_id }}-${{ github.run_attempt }}.csv
+            phenotypeActions/docs/stage-gates-canary-decision-${{ github.run_id }}-${{ github.run_attempt }}.json
+            phenotypeActions/docs/stage-gates-next-repo-rollout-${{ github.run_id }}-${{ github.run_attempt }}.csv
+            phenotypeActions/docs/stage-gates-next-repo-rollout-${{ github.run_id }}-${{ github.run_attempt }}.json
+          if-no-files-found: warn
 
       - name: Notify on completion
         if: always()
