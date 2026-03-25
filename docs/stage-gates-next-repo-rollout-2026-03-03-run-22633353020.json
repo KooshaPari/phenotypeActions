@@ -1,0 +1,22 @@
+[
+
+  {
+    "rank": 1,
+    "repo": "trash-cli",
+    "priority_score": 10,
+    "recommended_action": "fix_then_retry",
+    "run_outcome": "strictness_drift",
+    "remediation_category": "strictness_signal_alignment_required",
+    "next_command": "rg -n "severity:[[:space:]]*info|comment_severity_threshold:[[:space:]]*LOW|STAGE_GATES_STRICT" trash-cli/.coderabbit.yaml trash-cli/.gemini/config.yaml trash-cli/.github/workflows/stage-gates.yml"
+  }
+,
+  {
+    "rank": 2,
+    "repo": "civ",
+    "priority_score": 0,
+    "recommended_action": "fix_then_retry",
+    "run_outcome": "repo_unreachable",
+    "remediation_category": "access_repo_unreachable",
+    "next_command": "gh repo view KooshaPari/civ || gh auth refresh -h github.com -s repo"
+  }
+]
