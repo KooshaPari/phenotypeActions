@@ -1,7 +1,6 @@
 name: self-merge-gate
 on:
-  pull_request_review:
-  workflow_call:
+  workflow_dispatch:
 jobs:
   check:
     runs-on: ubuntu-latest
