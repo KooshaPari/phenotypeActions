@@ -34,12 +34,16 @@ inputs:
     required: false
     default: "false"
   github_token:
-    description: GitHub token for creating PRs
+    description: "GitHub token for creating PRs"
     required: true
   base_branch:
     description: "Base branch to create PRs against (default: main)"
     required: false
     default: "main"
+  repo_owner:
+    description: "GitHub organization or user owner for template and target repos (defaults to github.repository_owner)"
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -190,6 +194,13 @@ runs:
         log_info "Base branch: ${BASE_BRANCH}"
         echo ""
 
+        # Clone template repo for runtime portability on GitHub-hosted runners
+        log_info "Cloning template repository..."
+        if ! gh repo clone "${OWNER}/${TEMPLATE_REPO}" "${WORK_ROOT}/${TEMPLATE_REPO}" -- -q; then
+          log_error "Failed to clone template repo: ${OWNER}/${TEMPLATE_REPO}"
+          exit 1
+        fi
+
         # Parse target repos
         IFS=',' read -ra repos <<< "$TARGET_REPOS"
 
@@ -289,7 +300,7 @@ runs:
 
         for repo_name in "${repos[@]}"; do
           repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
-          repo_path="${PHENOTYPE_ROOT}/${repo_name}"
+          repo_path="${WORK_ROOT}/${repo_name}"
 
           if [[ ! -d "$repo_path" ]]; then
             log_info "Cloning ${REPO_OWNER}/${repo_name}..."
@@ -348,7 +359,7 @@ runs:
               workflow_file=$(find "$workflows_dir" -name "*${workflow}*.yml" -o -name "*${workflow}*.yaml" 2>/dev/null | head -1)
 
               if [[ -n "$workflow_file" ]]; then
-                if ! grep -q "phenotypeActions/actions/${workflow}" "$workflow_file" 2>/dev/null; then
+                if ! grep -Eq "phenotypeActions/(\\.github/actions|actions)/${workflow}|reusable-${workflow}\\.yml@" "$workflow_file" 2>/dev/null; then
                   log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
                   drift_detected=true
                   workflow_drift=true
