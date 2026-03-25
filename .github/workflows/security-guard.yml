@@ -1,9 +1,9 @@
 name: Security Guard
 
 on:
-on:
   workflow_dispatch:
-      - "**"
+  pull_request:
+    branches: [main, master]
 
 permissions:
   contents: read
