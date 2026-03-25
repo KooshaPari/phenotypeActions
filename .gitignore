@@ -2,10 +2,6 @@
 
 # Symlinked local worktrees (must not be recorded as gitlinks)
 PROJECT-wtrees/
-.DS_Store
-
-# Symlinked local worktrees (must not be recorded as gitlinks)
-PROJECT-wtrees/
 worktrees/
 
 # Local generated PR inventory dumps
