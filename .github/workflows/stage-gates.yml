@@ -116,10 +116,12 @@ jobs:
             echo "WARNING: non-strict mode continuing with unresolved triad entries"
           fi
 
-          echo "strictness=$STRICTNESS" >> "$GITHUB_OUTPUT"
-          echo "format=$format_cmd" >> "$GITHUB_OUTPUT"
-          echo "lint=$lint_cmd" >> "$GITHUB_OUTPUT"
-          echo "unit=$unit_cmd" >> "$GITHUB_OUTPUT"
+          {
+            echo "strictness=$STRICTNESS"
+            echo "format=$format_cmd"
+            echo "lint=$lint_cmd"
+            echo "unit=$unit_cmd"
+          } >> "$GITHUB_OUTPUT"
 
   format:
     name: format
