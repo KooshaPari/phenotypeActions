@@ -1,0 +1,2 @@
+run_stamp,total_repos,analyzed_repos,canary_ready_count,coverage_pct,canary_ready_pct,phase_1_pass,phase_2_pass,broad_pass,recommended_phase,decision_reason
+22633353020-1,2,1,0,50,0,false,false,false,hold,insufficient_thresholds
