@@ -38,10 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       REPO_OWNER: ${{ github.repository_owner }}
-<<<<<<< HEAD
       FALLBACK_OWNER: Phenotype
-=======
->>>>>>> main
     steps:
       - name: Checkout phenotypeActions
         uses: actions/checkout@v4
@@ -50,8 +47,6 @@ jobs:
           path: phenotypeActions
           token: ${{ secrets.GITHUB_TOKEN }}
 
-<<<<<<< HEAD
-=======
       - name: Resolve dependency repositories
         id: resolve-deps
         shell: bash
@@ -77,7 +72,7 @@ jobs:
 
       - name: Checkout template source
         continue-on-error: true
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ steps.resolve-deps.outputs.template_slug }}
           path: template-commons
@@ -85,13 +80,12 @@ jobs:
 
       - name: Checkout stage-gates source
         continue-on-error: true
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           repository: ${{ steps.resolve-deps.outputs.stage_gates_slug }}
           path: phenotype-config
           token: ${{ secrets.GITHUB_TOKEN }}
 
->>>>>>> main
       - name: Set target repos
         id: set-repos
         shell: bash
@@ -117,7 +111,7 @@ jobs:
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Resolve preflight dependency repos
+      - name: Resolve preflight dependency repositories
         id: preflight
         shell: bash
         env:
@@ -187,11 +181,8 @@ jobs:
           path: phenotypeActions/docs/template-sync-preflight-skip-classification.csv
 
       - name: Run template sync action
-<<<<<<< HEAD
-        if: steps.preflight.outputs.preflight_status == 'ok'
-=======
         id: template-sync
->>>>>>> main
+        if: steps.preflight.outputs.preflight_status == 'ok'
         uses: ./phenotypeActions/actions/template-sync
         with:
           template_repo: ${{ steps.resolve-deps.outputs.template_slug }}
@@ -202,7 +193,6 @@ jobs:
           repo_owner: ${{ env.REPO_OWNER }}
           dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          repo_owner: ${{ env.REPO_OWNER }}
           fallback_owner: ${{ env.FALLBACK_OWNER }}
           base_branch: "main"
 
