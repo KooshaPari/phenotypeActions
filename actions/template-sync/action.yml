@@ -1,0 +1,245 @@
+name: template-sync
+
+description: |
+  Synchronize governance files across Phenotype repos using templates from template-commons.
+  Detects drift in AGENTS.md, CLAUDE.md, and CI workflow files, then opens PRs to sync them.
+
+inputs:
+  template_repo:
+    description: "Source template repository (default: template-commons)"
+    required: false
+    default: "template-commons"
+  target_repos:
+    description: "Comma-separated list of target repos to sync (e.g., thegent,cliproxyapi++)"
+    required: false
+    default: "thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI"
+  dry_run:
+    description: "If true, report drift but do not create PRs"
+    required: false
+    default: "false"
+  github_token:
+    description: "GitHub token for creating PRs"
+    required: true
+  base_branch:
+    description: "Base branch to create PRs against (default: main)"
+    required: false
+    default: "main"
+  repo_owner:
+    description: "GitHub organization or user owner for template and target repos (defaults to github.repository_owner)"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up environment
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Verify gh CLI is available
+        if ! command -v gh >/dev/null 2>&1; then
+          echo "ERROR: gh CLI is not installed"
+          exit 1
+        fi
+
+        echo "GitHub CLI version: $(gh --version)"
+        echo "Template Sync action initialized"
+
+    - name: Configure GitHub CLI
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        # Configure gh CLI with provided token
+        gh auth status || true
+
+    - name: Detect drift and create sync PRs
+      shell: bash
+      env:
+        TEMPLATE_REPO: ${{ inputs.template_repo }}
+        TARGET_REPOS: ${{ inputs.target_repos }}
+        DRY_RUN: ${{ inputs.dry_run }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        BASE_BRANCH: ${{ inputs.base_branch }}
+        REPO_OWNER: ${{ inputs.repo_owner }}
+        GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        WORK_ROOT: ${{ runner.temp }}/template-sync
+      run: |
+        set -euo pipefail
+
+        # Colors for output
+        RED='\033[0;31m'
+        GREEN='\033[0;32m'
+        YELLOW='\033[1;33m'
+        BLUE='\033[0;34m'
+        NC='\033[0m'
+
+        log_info() { echo -e "${BLUE}ℹ${NC} $*"; }
+        log_success() { echo -e "${GREEN}✓${NC} $*"; }
+        log_warning() { echo -e "${YELLOW}⚠${NC} $*"; }
+        log_error() { echo -e "${RED}✗${NC} $*"; }
+
+        OWNER="${REPO_OWNER:-${GITHUB_REPOSITORY_OWNER:-}}"
+        if [[ -z "$OWNER" ]]; then
+          log_error "Repository owner could not be determined"
+          exit 1
+        fi
+
+        rm -rf "${WORK_ROOT}"
+        mkdir -p "${WORK_ROOT}"
+
+        log_info "Template Sync"
+        log_info "Repo owner: ${OWNER}"
+        log_info "Template repo: ${TEMPLATE_REPO}"
+        log_info "Dry run: ${DRY_RUN}"
+        log_info "Base branch: ${BASE_BRANCH}"
+        echo ""
+
+        # Clone template repo for runtime portability on GitHub-hosted runners
+        log_info "Cloning template repository..."
+        if ! gh repo clone "${OWNER}/${TEMPLATE_REPO}" "${WORK_ROOT}/${TEMPLATE_REPO}" -- -q; then
+          log_error "Failed to clone template repo: ${OWNER}/${TEMPLATE_REPO}"
+          exit 1
+        fi
+
+        # Parse target repos
+        IFS=',' read -ra repos <<< "$TARGET_REPOS"
+
+        TOTAL_REPOS=${#repos[@]}
+        SYNCED_REPOS=0
+        DRIFT_REPOS=()
+
+        for repo_name in "${repos[@]}"; do
+          repo_name=$(echo "$repo_name" | xargs)  # Trim whitespace
+          repo_path="${WORK_ROOT}/${repo_name}"
+
+          if ! gh repo clone "${OWNER}/${repo_name}" "${repo_path}" -- -q 2>/dev/null; then
+            log_warning "Repo not found or inaccessible (skipping): ${OWNER}/${repo_name}"
+            continue
+          fi
+
+          log_info "Checking ${repo_name}..."
+
+          # Track if drift detected
+          drift_detected=false
+
+          # Check for governance file drift
+          for file in "AGENTS.md" "CLAUDE.md"; do
+            template_file="${WORK_ROOT}/${TEMPLATE_REPO}/templates/${file}"
+            target_file="${repo_path}/${file}"
+
+            if [[ ! -f "$template_file" ]]; then
+              log_warning "Template not found: ${file}"
+              continue
+            fi
+
+            if [[ ! -f "$target_file" ]]; then
+              log_warning "${repo_name}: ${file} missing"
+              drift_detected=true
+            else
+              # Compare files (excluding repo-specific customizations if any)
+              if ! diff -q "$template_file" "$target_file" > /dev/null 2>&1; then
+                log_warning "${repo_name}: ${file} diverges from template"
+                drift_detected=true
+              fi
+            fi
+          done
+
+          # Check for workflow drift (verify composite action references)
+          workflows_dir="${repo_path}/.github/workflows"
+          if [[ -d "$workflows_dir" ]]; then
+            for workflow in policy-gate lint-test; do
+              workflow_file=$(find "$workflows_dir" -name "*${workflow}*.yml" -o -name "*${workflow}*.yaml" 2>/dev/null | head -1)
+
+              if [[ -n "$workflow_file" ]]; then
+                if ! grep -Eq "phenotypeActions/(\\.github/actions|actions)/${workflow}|reusable-${workflow}\\.yml@" "$workflow_file" 2>/dev/null; then
+                  log_warning "${repo_name}: ${workflow} workflow does not reference composite action"
+                  drift_detected=true
+                fi
+              else
+                log_warning "${repo_name}: ${workflow} workflow not found"
+                drift_detected=true
+              fi
+            done
+          fi
+
+          if [[ "$drift_detected" == true ]]; then
+            DRIFT_REPOS+=("$repo_name")
+
+            if [[ "$DRY_RUN" != "true" ]]; then
+              # Create sync PR for this repo
+              log_info "Creating sync PR for ${repo_name}..."
+
+              # Create a temporary branch name
+              branch_name="automation/template-sync-$(date +%s)"
+
+              cd "$repo_path"
+
+              # Create and checkout new branch
+              git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+              git checkout -b "$branch_name" "origin/${BASE_BRANCH}" 2>/dev/null || git checkout -b "$branch_name"
+
+              # Copy updated files
+              cp "${WORK_ROOT}/${TEMPLATE_REPO}/templates/AGENTS.md" "./AGENTS.md" 2>/dev/null || true
+              cp "${WORK_ROOT}/${TEMPLATE_REPO}/templates/CLAUDE.md" "./CLAUDE.md" 2>/dev/null || true
+
+              # Stage changes
+              git add AGENTS.md CLAUDE.md 2>/dev/null || true
+
+              # Commit if there are changes
+              if ! git diff --cached --quiet; then
+                git commit \
+                  -m "automation: sync governance templates from ${TEMPLATE_REPO}" \
+                  -m "This PR synchronizes governance templates (AGENTS.md, CLAUDE.md) from the template-commons repository to maintain consistency across Phenotype repos." \
+                  -m "Generated by template-sync automation." \
+                  2>/dev/null || true
+              fi
+
+              # Push branch and create PR
+              git push origin "$branch_name" 2>/dev/null || true
+
+              # Create PR using gh CLI
+              pr_output=$(gh pr create \
+                --title "automation: sync templates from ${TEMPLATE_REPO}" \
+                --body $'This PR synchronizes governance files from '"${TEMPLATE_REPO}"$'.\n\nGovernance templates synchronized:\n- AGENTS.md\n- CLAUDE.md\n\nPlease review and merge if changes are acceptable.' \
+                --base "$BASE_BRANCH" \
+                --head "$branch_name" \
+                2>/dev/null || echo "")
+
+              if [[ -n "$pr_output" ]]; then
+                log_success "${repo_name}: PR created"
+                ((SYNCED_REPOS++))
+              else
+                log_warning "${repo_name}: Could not create PR (may already exist)"
+              fi
+
+              cd - > /dev/null
+            else
+              log_info "${repo_name}: Drift detected (dry-run, no PR created)"
+            fi
+          else
+            log_success "${repo_name}: In sync"
+          fi
+        done
+
+        # Summary
+        echo ""
+        log_info "═══════════════════════════════════════════════"
+        log_info "Template Sync Summary"
+        log_info "═══════════════════════════════════════════════"
+        echo "Total repos checked: $TOTAL_REPOS"
+        echo "Repos with drift: ${#DRIFT_REPOS[@]}"
+        if [[ ${#DRIFT_REPOS[@]} -gt 0 ]]; then
+          echo "Repos needing sync:"
+          for repo in "${DRIFT_REPOS[@]}"; do
+            echo "  - $repo"
+          done
+        fi
+        echo ""
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+          log_warning "Dry run mode: no PRs created"
+        else
+          log_success "Synced repos: $SYNCED_REPOS"
+        fi

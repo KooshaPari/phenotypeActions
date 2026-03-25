@@ -53,18 +53,24 @@ jobs:
 
       - name: Trigger wave 1
         uses: KooshaPari/phenotypeActions/actions/review-orchestrator@main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         with:
           pr_number: ${{ steps.pr.outputs.number }}
           bots: ${{ inputs.wave1_bots || 'coderabbitai,gemini-code-assist' }}
           wave: wave1
-          cooldown_minutes: ${{ inputs.cooldown_minutes }}
-          retry_budget: ${{ inputs.retry_budget }}
+          cooldown_minutes: ${{ inputs.cooldown_minutes || 15 }}
+          retry_budget: ${{ inputs.retry_budget || 2 }}
 
       - name: Trigger wave 2
         uses: KooshaPari/phenotypeActions/actions/review-orchestrator@main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         with:
           pr_number: ${{ steps.pr.outputs.number }}
           bots: ${{ inputs.wave2_bots || 'augment,codex' }}
           wave: wave2
-          cooldown_minutes: ${{ inputs.cooldown_minutes }}
-          retry_budget: ${{ inputs.retry_budget }}
+          cooldown_minutes: ${{ inputs.cooldown_minutes || 15 }}
+          retry_budget: ${{ inputs.retry_budget || 2 }}

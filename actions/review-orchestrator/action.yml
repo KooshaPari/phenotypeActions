@@ -32,11 +32,18 @@ runs:
         WAVE: ${{ inputs.wave }}
         COOLDOWN_MINUTES: ${{ inputs.cooldown_minutes }}
         RETRY_BUDGET: ${{ inputs.retry_budget }}
+        GH_REPO: ${{ env.GH_REPO }}
       run: |
         set -euo pipefail
 
         if ! command -v gh >/dev/null 2>&1; then
           echo "gh CLI is required"
+          exit 1
+        fi
+
+        repo="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
+        if [[ -z "$repo" ]]; then
+          echo "GH_REPO or GITHUB_REPOSITORY must be set"
           exit 1
         fi
 
@@ -52,7 +59,7 @@ runs:
           marker="${marker_prefix} ${now} ${WAVE}"
 
           comments_tsv="$(
-            gh pr view "$PR_NUMBER" --json comments \
+            gh pr view "$PR_NUMBER" --repo "$repo" --json comments \
               --jq '.comments[] | select(.body | contains("'"$marker_prefix"'")) | [.createdAt, .body] | @tsv'
           )"
 
@@ -80,6 +87,6 @@ runs:
           fi
 
           comment="$(printf '@%s review\n\n%s' "$bot" "$marker")"
-          gh pr comment "$PR_NUMBER" --body "$comment"
+          gh pr comment "$PR_NUMBER" --repo "$repo" --body "$comment"
           echo "[triggered] ${bot} on PR #${PR_NUMBER}"
         done

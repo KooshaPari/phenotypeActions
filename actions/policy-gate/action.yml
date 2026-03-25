@@ -1,0 +1,233 @@
+name: "Policy Gate"
+description: "Enforce PR policy rules (merge-commits, namespace ownership, billed runners)"
+
+inputs:
+  # Merge commits / Layered fix
+  base_branch:
+    description: "Base branch for the PR diff range"
+    required: false
+    default: "main"
+  block_merge_commits:
+    description: "Fail if merge commits are found in the PR diff range"
+    required: false
+    default: "true"
+  require_layered_fix:
+    description: "Fail if fix/* PR targets main/master without exception label"
+    required: false
+    default: "false"
+  head_ref:
+    description: "Head branch name (required for layered-fix)"
+    required: false
+  pr_labels:
+    description: "JSON array of PR labels (required for layered-fix)"
+    required: false
+
+  # Namespace
+  allowed_namespace:
+    description: "Allowed owner namespace"
+    required: false
+  allowed_bots:
+    description: "Comma-separated bot allowlist"
+    required: false
+  pr_author:
+    description: "PR author login"
+    required: false
+  head_owner:
+    description: "Head repo owner login"
+    required: false
+
+  # Billed runners
+  enable_billed_runners:
+    description: "Enable billed GH runners"
+    required: false
+    default: "false"
+  matrix_type:
+    description: "Type of matrix to generate (bazel, rust-ci, rust-release, shell-tool-mcp)"
+    required: false
+
+outputs:
+  passed:
+    description: "Whether all policy checks passed"
+    value: ${{ steps.policy.outputs.passed }}
+  bazel_matrix:
+    description: "Bazel build matrix"
+    value: ${{ steps.matrix.outputs.bazel_matrix }}
+  lint_build_matrix:
+    description: "Rust lint/build matrix"
+    value: ${{ steps.matrix.outputs.lint_build_matrix }}
+  tests_matrix:
+    description: "Rust tests matrix"
+    value: ${{ steps.matrix.outputs.tests_matrix }}
+  build_matrix:
+    description: "Rust release build matrix"
+    value: ${{ steps.matrix.outputs.build_matrix }}
+  bash_darwin_matrix:
+    description: "Shell tool MCP Bash Darwin matrix"
+    value: ${{ steps.matrix.outputs.bash_darwin_matrix }}
+  zsh_darwin_matrix:
+    description: "Shell tool MCP Zsh Darwin matrix"
+    value: ${{ steps.matrix.outputs.zsh_darwin_matrix }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Enforce PR policies
+      id: policy
+      shell: bash
+      env:
+        BASE_REF: ${{ github.base_ref || inputs.base_branch }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        BLOCK_MERGES: ${{ inputs.block_merge_commits }}
+        REQUIRE_LAYERED: ${{ inputs.require_layered_fix }}
+        HEAD_REF: ${{ inputs.head_ref }}
+        PR_LABELS: ${{ inputs.pr_labels }}
+        ALLOWED_NAMESPACE: ${{ inputs.allowed_namespace }}
+        ALLOWED_BOTS: ${{ inputs.allowed_bots }}
+        PR_AUTHOR: ${{ inputs.pr_author }}
+        HEAD_OWNER: ${{ inputs.head_owner }}
+      run: |
+        set -euo pipefail
+
+        # 1. Namespace ownership
+        if [[ -n "$ALLOWED_NAMESPACE" ]]; then
+          if [[ -z "$PR_AUTHOR" ]]; then
+            echo "::error::ALLOWED_NAMESPACE set but PR_AUTHOR missing."
+            exit 1
+          fi
+
+          is_bot_author=0
+          IFS=',' read -ra bots <<< "${ALLOWED_BOTS:-}"
+          for bot in "${bots[@]}"; do
+            if [[ "$bot" == "$PR_AUTHOR" ]]; then
+              is_bot_author=1
+              break
+            fi
+          done
+
+          if [[ "$is_bot_author" -eq 0 ]]; then
+            if [[ "$PR_AUTHOR" != "$ALLOWED_NAMESPACE" || "$HEAD_OWNER" != "$ALLOWED_NAMESPACE" ]]; then
+              echo "::error::PR must come from namespace '$ALLOWED_NAMESPACE'."
+              echo "Author: $PR_AUTHOR"
+              echo "Head repo owner: $HEAD_OWNER"
+              exit 1
+            fi
+          fi
+          echo "Namespace ownership policy passed."
+        fi
+
+        # 2. Layered fix
+        if [[ "$REQUIRE_LAYERED" == "true" && -n "$HEAD_REF" ]]; then
+          if [[ "$HEAD_REF" == fix/* ]]; then
+            if [[ "$BASE_REF" == "main" || "$BASE_REF" == "master" ]]; then
+              if [[ "$PR_LABELS" != *"layered-pr-exception"* ]]; then
+                echo "::error::fix/* PRs must target a layered branch, not main/master."
+                echo "Use stack/*, layer/*, release/*, or add label layered-pr-exception."
+                exit 1
+              fi
+            fi
+          fi
+          echo "Layered fix policy passed."
+        fi
+
+        # 3. Merge commits
+        if [[ "$BLOCK_MERGES" == "true" ]]; then
+          git fetch origin "${BASE_REF}" --depth=1 || true
+          MERGES=$(git rev-list --merges "origin/${BASE_REF}..${HEAD_SHA}" || true)
+          if [[ -n "$MERGES" ]]; then
+            echo "::error::Merge commits detected in PR diff range:"
+            echo "$MERGES"
+            exit 1
+          fi
+          echo "Merge commit policy passed."
+        fi
+
+        echo "passed=true" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve matrix
+      id: matrix
+      if: inputs.matrix_type != ''
+      shell: bash
+      env:
+        MATRIX_TYPE: ${{ inputs.matrix_type }}
+        ENABLE_BILLED: ${{ inputs.enable_billed_runners }}
+      run: |
+        set -euo pipefail
+
+        if [[ "$MATRIX_TYPE" == "bazel" ]]; then
+          bazel_matrix='{"include":[
+            {"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},
+            {"os":"ubuntu-24.04","target":"x86_64-unknown-linux-musl"}
+          ]}'
+          if [[ "$ENABLE_BILLED" == "true" ]]; then
+            bazel_matrix='{"include":[
+              {"os":"macos-latest","target":"aarch64-apple-darwin"},
+              {"os":"macos-latest","target":"x86_64-apple-darwin"},
+              {"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},
+              {"os":"ubuntu-24.04","target":"x86_64-unknown-linux-musl"}
+            ]}'
+          fi
+          echo "bazel_matrix=${bazel_matrix}" >> "$GITHUB_OUTPUT"
+
+        elif [[ "$MATRIX_TYPE" == "rust-ci" ]]; then
+          lint_build_matrix='{"include":[
+            {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl","profile":"dev"},
+            {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","profile":"dev"},
+            {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl","profile":"release"}
+          ]}'
+          tests_matrix='{"include":[
+            {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","profile":"dev"}
+          ]}'
+          if [[ "$ENABLE_BILLED" == "true" ]]; then
+            lint_build_matrix='{"include":[
+              {"runner":"macos-latest","target":"aarch64-apple-darwin","profile":"dev"},
+              {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl","profile":"dev"},
+              {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","profile":"dev"},
+              {"runner":"windows-latest","target":"x86_64-pc-windows-msvc","profile":"dev"},
+              {"runner":"macos-latest","target":"aarch64-apple-darwin","profile":"release"},
+              {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl","profile":"release"},
+              {"runner":"windows-latest","target":"x86_64-pc-windows-msvc","profile":"release"}
+            ]}'
+            tests_matrix='{"include":[
+              {"runner":"macos-latest","target":"aarch64-apple-darwin","profile":"dev"},
+              {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","profile":"dev"},
+              {"runner":"windows-latest","target":"x86_64-pc-windows-msvc","profile":"dev"}
+            ]}'
+          fi
+          echo "lint_build_matrix=${lint_build_matrix}" >> "$GITHUB_OUTPUT"
+          echo "tests_matrix=${tests_matrix}" >> "$GITHUB_OUTPUT"
+
+        elif [[ "$MATRIX_TYPE" == "rust-release" ]]; then
+          build_matrix='{"include":[
+            {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl"},
+            {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},
+            {"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-musl"},
+            {"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu"}
+          ]}'
+          if [[ "$ENABLE_BILLED" == "true" ]]; then
+            build_matrix='{"include":[
+              {"runner":"macos-15-xlarge","target":"aarch64-apple-darwin"},
+              {"runner":"macos-15-xlarge","target":"x86_64-apple-darwin"},
+              {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-musl"},
+              {"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},
+              {"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-musl"},
+              {"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu"}
+            ]}'
+          fi
+          echo "build_matrix=${build_matrix}" >> "$GITHUB_OUTPUT"
+
+        elif [[ "$MATRIX_TYPE" == "shell-tool-mcp" ]]; then
+          bash_darwin_matrix='{"include":[]}'
+          zsh_darwin_matrix='{"include":[]}'
+          if [[ "$ENABLE_BILLED" == "true" ]]; then
+            bash_darwin_matrix='{"include":[
+              {"runner":"macos-15-xlarge","target":"aarch64-apple-darwin","variant":"macos-15"},
+              {"runner":"macos-14","target":"aarch64-apple-darwin","variant":"macos-14"}
+            ]}'
+            zsh_darwin_matrix='{"include":[
+              {"runner":"macos-15-xlarge","target":"aarch64-apple-darwin","variant":"macos-15"},
+              {"runner":"macos-14","target":"aarch64-apple-darwin","variant":"macos-14"}
+            ]}'
+          fi
+          echo "bash_darwin_matrix=${bash_darwin_matrix}" >> "$GITHUB_OUTPUT"
+          echo "zsh_darwin_matrix=${zsh_darwin_matrix}" >> "$GITHUB_OUTPUT"
+        fi

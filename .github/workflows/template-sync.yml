@@ -1,0 +1,89 @@
+name: Template Sync
+
+on:
+  # Trigger on push to template-commons main branch
+  repository_dispatch:
+    types: [template-commons-updated]
+  # Support manual trigger with optional target repos input
+  workflow_dispatch:
+    inputs:
+      target_repos:
+        description: "Comma-separated list of repos to sync (leave empty for all)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run mode - report drift but don't create PRs"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  template-sync:
+    name: Sync Governance Templates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout phenotypeActions
+        uses: actions/checkout@v6
+        with:
+          repository: Phenotype/repos/phenotypeActions
+          path: phenotypeActions
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout template-commons
+        uses: actions/checkout@v6
+        with:
+          repository: Phenotype/repos/template-commons
+          path: template-commons
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set target repos
+        id: set-repos
+        shell: bash
+        env:
+          USER_REPOS: ${{ github.event.inputs.target_repos }}
+        run: |
+          if [[ -n "$USER_REPOS" ]]; then
+            echo "repos=$USER_REPOS" >> "$GITHUB_OUTPUT"
+          else
+            # Default list of all known Phenotype repos
+            echo "repos=thegent,cliproxyapi++,agentapi-plusplus,bifrost-extensions,portage,civ,heliosApp,heliosCLI" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set dry-run mode
+        id: set-dry-run
+        shell: bash
+        env:
+          USER_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          if [[ -n "$USER_DRY_RUN" ]]; then
+            echo "dry_run=$USER_DRY_RUN" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run template sync action
+        uses: ./phenotypeActions/actions/template-sync
+        with:
+          template_repo: "template-commons"
+          target_repos: ${{ steps.set-repos.outputs.repos }}
+          dry_run: ${{ steps.set-dry-run.outputs.dry_run }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          base_branch: "main"
+
+      - name: Notify on completion
+        if: always()
+        shell: bash
+        run: |
+          echo "Template sync workflow completed"
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "Status: Success"
+          else
+            echo "Status: Failed"
+          fi

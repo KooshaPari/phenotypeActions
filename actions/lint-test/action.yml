@@ -1,0 +1,179 @@
+name: lint-test
+
+description: |
+  Run lint and tests for Phenotype repositories.
+  Auto-detects the project stack (Bun/Biome, Go, Rust) and runs the appropriate commands.
+
+inputs:
+  working-directory:
+    description: "Directory to run commands from (default: repo root)"
+    required: false
+    default: "."
+  skip-tests:
+    description: "If true, skip running tests (lint only)"
+    required: false
+    default: "false"
+  bun-version:
+    description: "Bun version to install (default: latest)"
+    required: false
+    default: "latest"
+
+runs:
+  using: composite
+  steps:
+    - name: Detect project stack
+      id: detect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        has_bun=false
+        has_biome=false
+        has_go=false
+        has_rust=false
+        has_node=false
+
+        if [[ -f "bun.lock" || -f "bunfig.toml" ]]; then
+          has_bun=true
+        fi
+
+        if [[ -f "biome.json" || -f "biome.jsonc" ]]; then
+          has_biome=true
+        fi
+
+        if [[ -f "go.mod" ]]; then
+          has_go=true
+        fi
+
+        if [[ -f "Cargo.toml" ]]; then
+          has_rust=true
+        fi
+
+        if [[ -f "package.json" && "$has_bun" == "false" ]]; then
+          has_node=true
+        fi
+
+        echo "has_bun=$has_bun"   >> "$GITHUB_OUTPUT"
+        echo "has_biome=$has_biome" >> "$GITHUB_OUTPUT"
+        echo "has_go=$has_go"     >> "$GITHUB_OUTPUT"
+        echo "has_rust=$has_rust" >> "$GITHUB_OUTPUT"
+        echo "has_node=$has_node" >> "$GITHUB_OUTPUT"
+
+        echo "Stack detection:"
+        echo "  bun:   $has_bun"
+        echo "  biome: $has_biome"
+        echo "  go:    $has_go"
+        echo "  rust:  $has_rust"
+        echo "  node:  $has_node"
+
+    # ── Bun / TypeScript stack ─────────────────────────────────────────────
+    - name: Install Bun
+      if: steps.detect.outputs.has_bun == 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Install dependencies (bun)
+      if: steps.detect.outputs.has_bun == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: bun install --frozen-lockfile
+
+    - name: Lint (biome)
+      if: steps.detect.outputs.has_bun == 'true' && steps.detect.outputs.has_biome == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: bun run lint
+
+    - name: Typecheck
+      if: steps.detect.outputs.has_bun == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if grep -q '"typecheck"' package.json 2>/dev/null; then
+          bun run typecheck
+        else
+          echo "No typecheck script found, skipping."
+        fi
+
+    - name: Test (bun)
+      if: steps.detect.outputs.has_bun == 'true' && inputs.skip-tests == 'false'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: bun run test
+
+    # ── Node (npm/yarn/pnpm) stack ─────────────────────────────────────────
+    - name: Setup Node.js
+      if: steps.detect.outputs.has_node == 'true'
+      uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+        cache: npm
+
+    - name: Install dependencies (npm)
+      if: steps.detect.outputs.has_node == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npm ci
+
+    - name: Lint (npm)
+      if: steps.detect.outputs.has_node == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if grep -q '"lint"' package.json 2>/dev/null; then
+          npm run lint
+        else
+          echo "No lint script found, skipping."
+        fi
+
+    - name: Test (npm)
+      if: steps.detect.outputs.has_node == 'true' && inputs.skip-tests == 'false'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if grep -q '"test"' package.json 2>/dev/null; then
+          npm test
+        else
+          echo "No test script found, skipping."
+        fi
+
+    # ── Go stack ───────────────────────────────────────────────────────────
+    - name: Setup Go
+      if: steps.detect.outputs.has_go == 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Lint (go vet)
+      if: steps.detect.outputs.has_go == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go vet ./...
+
+    - name: Test (go)
+      if: steps.detect.outputs.has_go == 'true' && inputs.skip-tests == 'false'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: go test ./...
+
+    # ── Rust stack ─────────────────────────────────────────────────────────
+    - name: Setup Rust
+      if: steps.detect.outputs.has_rust == 'true'
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+
+    - name: Lint (clippy)
+      if: steps.detect.outputs.has_rust == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+    - name: Test (cargo)
+      if: steps.detect.outputs.has_rust == 'true' && inputs.skip-tests == 'false'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: cargo test --all-features
