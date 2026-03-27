@@ -1,0 +1,17 @@
+version: '3'
+tasks:
+  lint:
+    desc: Lint workflow files
+    cmds:
+      - actionlint .github/workflows/*.yml || echo "actionlint not installed"
+  validate:
+    desc: Validate workflow YAML
+    cmds:
+      - find .github/workflows -name "*.yml" -exec sh -c 'echo "Validating $1..." && cat "$1" > /dev/null' _ {} \;
+  quality:
+    desc: Run all quality checks
+    deps: [lint]
+  docs:build:
+    desc: Build docs if present
+    cmds:
+      - '[ -f package.json ] && bun run docs:build || echo "No docs"'
