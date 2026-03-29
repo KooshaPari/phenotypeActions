@@ -41,7 +41,7 @@ jobs:
       FALLBACK_OWNER: Phenotype
     steps:
       - name: Checkout phenotypeActions
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.repository }}
           path: phenotypeActions
@@ -72,7 +72,7 @@ jobs:
 
       - name: Checkout template source
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ steps.resolve-deps.outputs.template_slug }}
           path: template-commons
@@ -80,7 +80,7 @@ jobs:
 
       - name: Checkout stage-gates source
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ steps.resolve-deps.outputs.stage_gates_slug }}
           path: phenotype-config
@@ -157,7 +157,7 @@ jobs:
 
       - name: Checkout template-commons
         if: steps.preflight.outputs.preflight_status == 'ok'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ steps.preflight.outputs.template_repo_slug }}
           path: template-commons
